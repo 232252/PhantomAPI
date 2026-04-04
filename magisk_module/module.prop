@@ -1,6 +1,6 @@
-id=phantomapi
-name=PhantomAPI - 系统级控制服务
+id=PhantomAPI
+name=PhantomAPI - Android Control Service
 version=v1.0.0
 versionCode=100
-author=PhantomTeam
-description=基于 Magisk/LSPosed 的系统级 UI 感知与底层控制 API 服务。功能：原生 UI 节点感知、WebView DOM 提取、底层事件注入、网络状态监控。绝对禁止使用截图与 OCR 技术。
+author=PhantomAPI
+description=System-level Android control service via RESTful API. Zero screenshot/OCR, based on AccessibilityNodeInfo. Features: WebView debugging, CDP protocol, input injection.

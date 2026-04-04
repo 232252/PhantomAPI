@@ -2,29 +2,30 @@
 # PhantomAPI - post-fs-data.sh
 # 在文件系统挂载后执行
 
-MODDIR=${0%/*}
+MODDIR="${0%/*}"
+LOGFILE="/data/adb/PhantomAPI.log"
 
 log() {
-    echo "PhantomAPI: $1" >> /cache/phantomapi.log
+    echo "$(date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOGFILE"
 }
 
-log "post-fs-data 开始执行"
+log "=== PhantomAPI post-fs-data ==="
 
-# 检查系统分区是否可写
-if ! mountpoint -q /system; then
-    mount -o rw,remount /system 2>/dev/null || \
-    mount -o rw,remount / 2>/dev/null
+# 确保 priv-app 目录存在
+if [ ! -d "/system/priv-app/PhantomAPI" ]; then
+    log "创建 priv-app 目录"
+    mkdir -p "/system/priv-app/PhantomAPI"
 fi
 
-# 复制 APK 到系统目录
-if [ -f "$MODDIR/system/priv-app/PhantomAPI/PhantomAPI.apk" ]; then
-    log "检查 APK 文件存在"
-    
-    # 设置权限
-    chmod 644 "$MODDIR/system/priv-app/PhantomAPI/PhantomAPI.apk"
-    chown root:root "$MODDIR/system/priv-app/PhantomAPI/PhantomAPI.apk"
-    
-    log "APK 权限设置完成"
+# 检查 APK 是否存在
+APK_SOURCE="$MODPATH/system/priv-app/PhantomAPI/PhantomAPI.apk"
+if [ -f "$APK_SOURCE" ]; then
+    log "APK 文件存在: $APK_SOURCE"
+else
+    log "警告: APK 文件不存在"
 fi
 
-log "post-fs-data 执行完成"
+# 设置权限
+set_perm_recursive /data/adb/modules/PhantomAPI 0 0 0755 0644 2>/dev/null
+
+log "post-fs-data 完成"

@@ -1,8 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Xposed 作用域 -->
     <string-array name="xposed_scope">
+        <!-- Framework - 用于 Hook WebView 基类 -->
         <item>android</item>
-        <item>com.android.systemui</item>
-        <item>com.android.settings</item>
+        <!-- 系统浏览器 -->
+        <item>com.android.chrome</item>
+        <!-- UC 浏览器系列 -->
+        <item>com.UCMobile</item>
+        <item>com.uc.browser</item>
+        <!-- QQ 浏览器 -->
+        <item>com.tencent.mtt</item>
+        <!-- 微信 -->
+        <item>com.tencent.mm</item>
+        <!-- 支付宝 -->
+        <item>com.eg.android.AlipayGphone</item>
+        <!-- 抖音 -->
+        <item>com.ss.android.ugc.aweme</item>
     </string-array>
 </resources>

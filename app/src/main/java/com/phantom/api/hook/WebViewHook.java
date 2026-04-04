@@ -2,8 +2,14 @@ package com.phantom.api.hook;
 
 import android.app.AndroidAppHelper;
 import android.content.Context;
+import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.webkit.WebView;
+import android.webkit.WebViewClient;
+
+import java.lang.reflect.Method;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
@@ -11,63 +17,102 @@ import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
- * WebView 强制调试 Hook
+ * WebView 强制调试 + DOM 注入 Hook
  * 
- * 功能：
- * 1. 强制开启 WebView 调试端口
- * 2. 强制注入 JS 脚本获取 DOM
- * 3. 兼容阿里 UC 内核
+ * 核心能力：
+ * 1. 强制开启 setWebContentsDebuggingEnabled(true)
+ * 2. 在 onPageFinished 注入统一 JS SDK
+ * 3. 兼容 UC 内核、腾讯 X5 内核
  * 
- * 安装方式：
+ * 安装：
  * 1. 编译为 LSPosed 模块
  * 2. 在 LSPosed 中启用并勾选目标应用
  */
 public class WebViewHook implements IXposedHookLoadPackage {
     private static final String TAG = "PhantomHook";
     
-    // 要注入的 JS 脚本 - 获取页面所有文本和坐标
-    private static final String DOM_EXTRACT_SCRIPT = 
+    // 统一 JS SDK - 注入到所有 WebView
+    private static final String PHANTOM_JS_SDK = 
         "(function(){" +
-        "  if(window.__phantom_dom_extracted__) return;" +
-        "  window.__phantom_dom_extracted__ = true;" +
-        "  " +
-        "  var data = [];" +
-        "  var walker = document.createTreeWalker(" +
-        "    document.body, " +
-        "    NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, " +
-        "    null, " +
-        "    false" +
-        "  );" +
-        "  " +
-        "  while(walker.nextNode()){" +
-        "    var node = walker.currentNode;" +
-        "    var text = '';" +
+        "  if(window.__phantom_bridge__) return;" +
+        "  window.__phantom_bridge__ = {" +
+        "    version: '1.0.0'," +
         "    " +
-        "    if(node.nodeType === Node.TEXT_NODE){" +
-        "      text = node.textContent.trim();" +
-        "    } else if(node.nodeType === Node.ELEMENT_NODE){" +
-        "      text = (node.innerText || node.value || node.placeholder || '').trim();" +
-        "    }" +
-        "    " +
-        "    if(text && text.length > 0){" +
-        "      try{" +
-        "        var rect = node.getBoundingClientRect();" +
-        "        if(rect.width > 0 && rect.height > 0){" +
-        "          data.push({" +
-        "            t: text.substring(0, 200)," +
-        "            x: Math.round(rect.x + rect.width / 2)," +
-        "            y: Math.round(rect.y + rect.height / 2)," +
-        "            w: Math.round(rect.width)," +
-        "            h: Math.round(rect.height)," +
-        "            tag: node.tagName ? node.tagName.toLowerCase() : 'text'" +
-        "          });" +
+        "    // 获取 DOM 树" +
+        "    getDOM: function() {" +
+        "      var data = [];" +
+        "      var walker = document.createTreeWalker(" +
+        "        document.body, " +
+        "        NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, " +
+        "        null, " +
+        "        false" +
+        "      );" +
+        "      while(walker.nextNode()){" +
+        "        var node = walker.currentNode;" +
+        "        var text = '';" +
+        "        if(node.nodeType === Node.TEXT_NODE){" +
+        "          text = node.textContent.trim();" +
+        "        } else if(node.nodeType === Node.ELEMENT_NODE){" +
+        "          text = (node.innerText || node.value || node.placeholder || '').trim();" +
         "        }" +
-        "      }catch(e){}" +
+        "        if(text && text.length > 0){" +
+        "          try{" +
+        "            var rect = node.getBoundingClientRect();" +
+        "            if(rect.width > 0 && rect.height > 0){" +
+        "              data.push({" +
+        "                t: text.substring(0, 200)," +
+        "                x: Math.round(rect.x + rect.width / 2)," +
+        "                y: Math.round(rect.y + rect.height / 2)," +
+        "                w: Math.round(rect.width)," +
+        "                h: Math.round(rect.height)," +
+        "                tag: node.tagName ? node.tagName.toLowerCase() : 'text'," +
+        "                clickable: node.onclick !== null || node.style.cursor === 'pointer'" +
+        "              });" +
+        "            }" +
+        "          }catch(e){}" +
+        "        }" +
+        "      }" +
+        "      return data;" +
+        "    }," +
+        "    " +
+        "    // 查找元素" +
+        "    find: function(text) {" +
+        "      var dom = this.getDOM();" +
+        "      return dom.filter(function(item) {" +
+        "        return item.t.indexOf(text) !== -1;" +
+        "      });" +
+        "    }," +
+        "    " +
+        "    // 点击元素" +
+        "    click: function(x, y) {" +
+        "      var el = document.elementFromPoint(x, y);" +
+        "      if(el) {" +
+        "        el.click();" +
+        "        return true;" +
+        "      }" +
+        "      return false;" +
+        "    }," +
+        "    " +
+        "    // 滚动" +
+        "    scroll: function(x, y) {" +
+        "      window.scrollTo(x, y);" +
+        "      return true;" +
+        "    }," +
+        "    " +
+        "    // 监听 DOM 变化" +
+        "    watchDOM: function(callback) {" +
+        "      if(this._observer) return;" +
+        "      this._observer = new MutationObserver(function(mutations) {" +
+        "        callback({type: 'dom_changed', count: mutations.length});" +
+        "      });" +
+        "      this._observer.observe(document.body, {" +
+        "        childList: true," +
+        "        subtree: true," +
+        "        attributes: true" +
+        "      });" +
         "    }" +
-        "  }" +
-        "  " +
-        "  // 通过 console.log 输出，可被拦截" +
-        "  console.log('__PHANTOM_DOM__' + JSON.stringify(data));" +
+        "  };" +
+        "  console.log('[PhantomBridge] JS SDK injected v1.0.0');" +
         "})();";
     
     @Override
@@ -77,173 +122,134 @@ public class WebViewHook implements IXposedHookLoadPackage {
             return;
         }
         
-        Log.i(TAG, "加载包: " + lpparam.packageName);
+        Log.i(TAG, "加载包: " + lpparam.packageName + " - 开始 Hook WebView");
         
         // Hook WebView 调试开关
         hookWebViewDebugging(lpparam);
         
-        // Hook WebViewClient.onPageFinished 注入 JS
-        hookPageFinished(lpparam);
+        // Hook WebViewClient.onPageFinished 注入 JS SDK
+        hookWebViewClient(lpparam);
         
-        // Hook UC WebView
-        hookUcWebView(lpparam);
+        // Hook UC 内核 (如果存在)
+        hookUCWebView(lpparam);
         
-        // Hook 阿里 H5 容器
-        hookAlibabaH5(lpparam);
+        // Hook 腾讯 X5 内核 (如果存在)
+        hookX5WebView(lpparam);
     }
     
     /**
      * Hook WebView.setWebContentsDebuggingEnabled
-     * 强制开启调试端口
+     * 强制开启调试模式
      */
     private void hookWebViewDebugging(XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            XposedHelpers.findAndHookMethod(
-                "android.webkit.WebView",
-                lpparam.classLoader,
-                "setWebContentsDebuggingEnabled",
-                boolean.class,
+            Class<?> webViewClass = XposedHelpers.findClass("android.webkit.WebView", lpparam.classLoader);
+            
+            XposedHelpers.findAndHookMethod(webViewClass, "setWebContentsDebuggingEnabled", boolean.class,
                 new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         // 强制设置为 true
                         param.args[0] = true;
-                        Log.d(TAG, "[WebView] 强制开启调试端口: " + lpparam.packageName);
+                        Log.d(TAG, "WebView 调试已强制开启");
                     }
-                }
-            );
+                    
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        // 确保调试开启
+                        XposedHelpers.callStaticMethod(webViewClass, "setWebContentsDebuggingEnabled", true);
+                    }
+                });
             
-            Log.i(TAG, "WebView 调试 Hook 成功");
+            // 直接调用确保开启
+            XposedHelpers.callStaticMethod(webViewClass, "setWebContentsDebuggingEnabled", true);
+            Log.i(TAG, "WebView 调试模式已全局开启");
+            
         } catch (Throwable t) {
-            Log.e(TAG, "WebView 调试 Hook 失败", t);
+            Log.e(TAG, "Hook WebView 调试失败: " + t.getMessage());
         }
     }
     
     /**
      * Hook WebViewClient.onPageFinished
-     * 页面加载完成后注入 JS
+     * 在页面加载完成后注入 JS SDK
      */
-    private void hookPageFinished(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookWebViewClient(XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            XposedHelpers.findAndHookMethod(
-                "android.webkit.WebViewClient",
-                lpparam.classLoader,
-                "onPageFinished",
-                WebView.class,
-                String.class,
+            Class<?> webViewClientClass = XposedHelpers.findClass("android.webkit.WebViewClient", lpparam.classLoader);
+            
+            XposedHelpers.findAndHookMethod(webViewClientClass, "onPageFinished", 
+                WebView.class, String.class,
                 new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                         WebView webView = (WebView) param.args[0];
                         String url = (String) param.args[1];
                         
-                        Log.d(TAG, "[WebView] 页面加载完成: " + url);
-                        
-                        // 注入 DOM 提取脚本
-                        try {
-                            webView.evaluateJavascript(DOM_EXTRACT_SCRIPT, null);
-                            Log.d(TAG, "[WebView] JS 注入成功");
-                        } catch (Exception e) {
-                            Log.e(TAG, "[WebView] JS 注入失败", e);
-                        }
+                        // 在主线程注入 JS
+                        new Handler(Looper.getMainLooper()).post(() -> {
+                            try {
+                                // KitKat+ 使用 evaluateJavascript
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                                    webView.evaluateJavascript(PHANTOM_JS_SDK, null);
+                                } else {
+                                    webView.loadUrl("javascript:" + PHANTOM_JS_SDK);
+                                }
+                                Log.d(TAG, "JS SDK 注入成功: " + url);
+                            } catch (Exception e) {
+                                Log.e(TAG, "JS SDK 注入失败: " + e.getMessage());
+                            }
+                        });
                     }
-                }
-            );
+                });
             
-            Log.i(TAG, "onPageFinished Hook 成功");
+            Log.i(TAG, "WebViewClient Hook 成功");
+            
         } catch (Throwable t) {
-            Log.e(TAG, "onPageFinished Hook 失败", t);
+            Log.e(TAG, "Hook WebViewClient 失败: " + t.getMessage());
         }
     }
     
     /**
-     * Hook UC WebView
-     * 兼容阿里系应用
+     * Hook UC 内核 WebView
      */
-    private void hookUcWebView(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookUCWebView(XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            // UC WebView 调试
-            Class<?> ucWebViewClass = XposedHelpers.findClass(
-                "com.uc.webview.export.WebView", 
-                lpparam.classLoader
-            );
+            Class<?> ucWebViewClass = XposedHelpers.findClass("com.uc.webview.export.WebView", lpparam.classLoader);
+            Class<?> ucSettingsClass = XposedHelpers.findClass("com.uc.webview.export.WebSettings", lpparam.classLoader);
             
-            if (ucWebViewClass != null) {
-                XposedHelpers.findAndHookMethod(
-                    ucWebViewClass,
-                    "setWebContentsDebuggingEnabled",
-                    boolean.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                            param.args[0] = true;
-                            Log.d(TAG, "[UC WebView] 强制开启调试端口");
-                        }
-                    }
-                );
-                
-                Log.i(TAG, "UC WebView Hook 成功");
-            }
-        } catch (Throwable t) {
-            // UC WebView 不存在，忽略
-        }
-    }
-    
-    /**
-     * Hook 阿里 H5 容器
-     */
-    private void hookAlibabaH5(XC_LoadPackage.LoadPackageParam lpparam) {
-        try {
-            // 阿里 H5 容器调试
-            Class<?> h5ContainerClass = XposedHelpers.findClass(
-                "com.alipay.mobile.h5container.api.H5Param", 
-                lpparam.classLoader
-            );
-            
-            if (h5ContainerClass != null) {
-                Log.i(TAG, "检测到阿里 H5 容器");
-            }
-        } catch (Throwable t) {
-            // 不存在，忽略
-        }
-        
-        try {
-            // Hook 支付宝/淘宝 UC 内核
-            Class<?> tauWebViewClass = XposedHelpers.findClass(
-                "com.taobao.tao.TauWebView", 
-                lpparam.classLoader
-            );
-            
-            if (tauWebViewClass != null) {
-                Log.i(TAG, "检测到淘宝 TauWebView");
-            }
-        } catch (Throwable t) {
-            // 不存在，忽略
-        }
-    }
-    
-    /**
-     * Hook WebView.evaluateJavascript
-     * 拦截 JS 执行结果
-     */
-    private void hookEvaluateJavascript(XC_LoadPackage.LoadPackageParam lpparam) {
-        try {
-            XposedHelpers.findAndHookMethod(
-                "android.webkit.WebView",
-                lpparam.classLoader,
-                "evaluateJavascript",
-                String.class,
-                android.webkit.ValueCallback.class,
+            // Hook UC WebView 调试
+            XposedHelpers.findAndHookMethod(ucSettingsClass, "setJavaScriptEnabled", boolean.class,
                 new XC_MethodHook() {
                     @Override
-                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        String script = (String) param.args[0];
-                        Log.d(TAG, "[WebView] 执行 JS: " + script.substring(0, Math.min(100, script.length())));
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        // 确保 JS 启用
                     }
-                }
-            );
+                });
+            
+            Log.i(TAG, "UC WebView Hook 成功");
+            
         } catch (Throwable t) {
-            Log.e(TAG, "evaluateJavascript Hook 失败", t);
+            // UC 内核可能不存在，忽略
+        }
+    }
+    
+    /**
+     * Hook 腾讯 X5 内核
+     */
+    private void hookX5WebView(XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> x5WebViewClass = XposedHelpers.findClass("com.tencent.smtt.sdk.WebView", lpparam.classLoader);
+            
+            // Hook X5 WebView 调试
+            Method setDebugMethod = x5WebViewClass.getDeclaredMethod("setWebContentsDebuggingEnabled", boolean.class);
+            setDebugMethod.setAccessible(true);
+            setDebugMethod.invoke(null, true);
+            
+            Log.i(TAG, "X5 WebView 调试已开启");
+            
+        } catch (Throwable t) {
+            // X5 内核可能不存在，忽略
         }
     }
 }

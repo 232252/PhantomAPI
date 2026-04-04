@@ -17,6 +17,15 @@ import fi.iki.elonen.NanoHTTPD;
 
 /**
  * 原生 UI 域 API 处理器
+ * 
+ * 端点：
+ * /api/ui/tree - 获取 UI 树
+ * /api/ui/find - 查找节点
+ * /api/ui/tap - 点击坐标
+ * /api/ui/swipe - 滑动
+ * /api/ui/back - 返回键
+ * /api/ui/wait - 显式等待
+ * /api/ui/action - 节点操作
  */
 public class UiApiHandler implements HttpServerEngine.ApiHandler {
     private static final String TAG = "UiApiHandler";
@@ -33,57 +42,101 @@ public class UiApiHandler implements HttpServerEngine.ApiHandler {
         
         if (uri.equals("/api/ui/tree")) {
             return handleGetTree(a11yService);
-        } else if (uri.equals("/api/ui/action")) {
-            return handleAction(a11yService, session);
+        } else if (uri.equals("/api/ui/find")) {
+            return handleFind(a11yService, session);
         } else if (uri.equals("/api/ui/tap")) {
             return handleTap(a11yService, session);
         } else if (uri.equals("/api/ui/swipe")) {
             return handleSwipe(a11yService, session);
-        } else if (uri.equals("/api/ui/find")) {
-            return handleFind(a11yService, session);
         } else if (uri.equals("/api/ui/back")) {
             return handleBack(a11yService);
+        } else if (uri.equals("/api/ui/wait")) {
+            return handleWait(a11yService, session);
+        } else if (uri.equals("/api/ui/action")) {
+            return handleAction(a11yService, session);
         }
         
         return HttpServerEngine.jsonError(NanoHTTPD.Response.Status.NOT_FOUND, "Unknown: " + uri);
     }
     
+    /**
+     * 获取 UI 树
+     */
     private NanoHTTPD.Response handleGetTree(PhantomAccessibilityService service) throws Exception {
         String treeJson = service.getNodeTreeJson();
         return HttpServerEngine.jsonSuccess("tree", new JSONObject(treeJson));
     }
     
-    private NanoHTTPD.Response handleAction(PhantomAccessibilityService service, 
+    /**
+     * 查找节点
+     */
+    private NanoHTTPD.Response handleFind(PhantomAccessibilityService service, 
             NanoHTTPD.IHTTPSession session) throws Exception {
-        JSONObject body = parseJsonBody(session);
-        String strategy = body.optString("strategy", "text");
-        String target = body.optString("target", "");
+        Map<String, String> params = parseQueryParams(session);
+        String text = params.get("text");
+        String id = params.get("id");
+        String className = params.get("class");
         
-        List<AccessibilityNodeInfo> nodes = service.findNodesByText(target);
+        List<AccessibilityNodeInfo> nodes = null;
         
-        if (nodes == null || nodes.isEmpty()) {
-            return HttpServerEngine.jsonError(NanoHTTPD.Response.Status.NOT_FOUND, "未找到: " + target);
+        if (text != null && !text.isEmpty()) {
+            nodes = service.findNodesByText(text);
+        } else if (id != null && !id.isEmpty()) {
+            nodes = service.findNodesById(id);
+        } else {
+            return HttpServerEngine.jsonError(
+                NanoHTTPD.Response.Status.BAD_REQUEST, 
+                "需要 text 或 id 参数");
         }
         
-        AccessibilityNodeInfo targetNode = nodes.get(0);
-        boolean success = service.clickNode(targetNode);
+        JSONArray nodesArray = new JSONArray();
         
-        for (AccessibilityNodeInfo node : nodes) {
-            node.recycle();
+        if (nodes != null) {
+            for (AccessibilityNodeInfo node : nodes) {
+                JSONObject nodeJson = nodeToJson(node);
+                nodesArray.put(nodeJson);
+                node.recycle();
+            }
         }
         
-        return HttpServerEngine.jsonSuccess("clicked", success);
+        JSONObject result = new JSONObject();
+        result.put("success", true);
+        result.put("count", nodesArray.length());
+        result.put("nodes", nodesArray);
+        
+        return HttpServerEngine.jsonSuccess(result);
     }
     
+    /**
+     * 点击坐标
+     */
     private NanoHTTPD.Response handleTap(PhantomAccessibilityService service, 
             NanoHTTPD.IHTTPSession session) throws Exception {
         JSONObject body = parseJsonBody(session);
         int x = body.getInt("x");
         int y = body.getInt("y");
+        
+        // 检查是否有等待条件
+        JSONObject wait = body.optJSONObject("wait");
+        
         boolean success = service.clickAtPosition(x, y);
-        return HttpServerEngine.jsonSuccess("tapped", success);
+        
+        // 如果有等待条件，执行等待
+        if (wait != null && success) {
+            success = performWait(service, wait);
+        }
+        
+        JSONObject result = new JSONObject();
+        result.put("tapped", success);
+        result.put("x", x);
+        result.put("y", y);
+        
+        return HttpServerEngine.jsonSuccess(result);
     }
     
+    /**
+     * 滑动
+     */
     private NanoHTTPD.Response handleSwipe(PhantomAccessibilityService service, 
             NanoHTTPD.IHTTPSession session) throws Exception {
         JSONObject body = parseJsonBody(session);
@@ -92,40 +145,189 @@ public class UiApiHandler implements HttpServerEngine.ApiHandler {
         int endX = body.getInt("endX");
         int endY = body.getInt("endY");
         long duration = body.optLong("duration", 300);
+        
         boolean success = service.performSwipe(startX, startY, endX, endY, duration);
-        return HttpServerEngine.jsonSuccess("swiped", success);
+        
+        JSONObject result = new JSONObject();
+        result.put("swiped", success);
+        result.put("startX", startX);
+        result.put("startY", startY);
+        result.put("endX", endX);
+        result.put("endY", endY);
+        
+        return HttpServerEngine.jsonSuccess(result);
     }
     
-    private NanoHTTPD.Response handleFind(PhantomAccessibilityService service, 
-            NanoHTTPD.IHTTPSession session) throws Exception {
-        Map<String, String> params = parseQueryParams(session);
-        String text = params.get("text");
-        
-        if (text == null || text.isEmpty()) {
-            return HttpServerEngine.jsonError(NanoHTTPD.Response.Status.BAD_REQUEST, "需要 text 参数");
-        }
-        
-        List<AccessibilityNodeInfo> nodes = service.findNodesByText(text);
-        JSONArray nodesArray = new JSONArray();
-        
-        if (nodes != null) {
-            for (AccessibilityNodeInfo node : nodes) {
-                JSONObject nodeJson = new JSONObject();
-                nodeJson.put("text", node.getText() != null ? node.getText().toString() : "");
-                android.graphics.Rect bounds = new android.graphics.Rect();
-                node.getBoundsInScreen(bounds);
-                nodeJson.put("bounds", bounds.toString());
-                nodesArray.put(nodeJson);
-                node.recycle();
-            }
-        }
-        
-        return HttpServerEngine.jsonSuccess("nodes", nodesArray);
-    }
-    
+    /**
+     * 返回键
+     */
     private NanoHTTPD.Response handleBack(PhantomAccessibilityService service) throws Exception {
         boolean success = service.performBack();
         return HttpServerEngine.jsonSuccess("back", success);
+    }
+    
+    /**
+     * 显式等待
+     */
+    private NanoHTTPD.Response handleWait(PhantomAccessibilityService service, 
+            NanoHTTPD.IHTTPSession session) throws Exception {
+        JSONObject body = parseJsonBody(session);
+        JSONObject condition = body.getJSONObject("condition");
+        long timeout = body.optLong("timeout_ms", 5000);
+        long interval = body.optLong("interval_ms", 200);
+        
+        boolean success = performWait(service, body);
+        
+        JSONObject result = new JSONObject();
+        result.put("success", success);
+        result.put("condition", condition);
+        result.put("timeout_ms", timeout);
+        
+        return HttpServerEngine.jsonSuccess(result);
+    }
+    
+    /**
+     * 执行等待
+     */
+    private boolean performWait(PhantomAccessibilityService service, JSONObject waitConfig) {
+        try {
+            JSONObject condition = waitConfig.getJSONObject("condition");
+            long timeout = waitConfig.optLong("timeout_ms", 5000);
+            long interval = waitConfig.optLong("interval_ms", 200);
+            
+            String type = condition.getString("type");
+            
+            switch (type) {
+                case "text":
+                    String text = condition.getString("text");
+                    return HttpServerEngine.waitForCondition(() -> {
+                        List<AccessibilityNodeInfo> nodes = service.findNodesByText(text);
+                        boolean found = nodes != null && !nodes.isEmpty();
+                        if (nodes != null) {
+                            for (AccessibilityNodeInfo node : nodes) {
+                                node.recycle();
+                            }
+                        }
+                        return found;
+                    }, timeout, interval);
+                    
+                case "id":
+                    String id = condition.getString("id");
+                    return HttpServerEngine.waitForCondition(() -> {
+                        List<AccessibilityNodeInfo> nodes = service.findNodesById(id);
+                        boolean found = nodes != null && !nodes.isEmpty();
+                        if (nodes != null) {
+                            for (AccessibilityNodeInfo node : nodes) {
+                                node.recycle();
+                            }
+                        }
+                        return found;
+                    }, timeout, interval);
+                    
+                case "gone":
+                    String goneText = condition.getString("text");
+                    return HttpServerEngine.waitForCondition(() -> {
+                        List<AccessibilityNodeInfo> nodes = service.findNodesByText(goneText);
+                        boolean gone = nodes == null || nodes.isEmpty();
+                        if (nodes != null) {
+                            for (AccessibilityNodeInfo node : nodes) {
+                                node.recycle();
+                            }
+                        }
+                        return gone;
+                    }, timeout, interval);
+                    
+                default:
+                    return false;
+            }
+            
+        } catch (Exception e) {
+            Log.e(TAG, "等待执行失败: " + e.getMessage());
+            return false;
+        }
+    }
+    
+    /**
+     * 节点操作
+     */
+    private NanoHTTPD.Response handleAction(PhantomAccessibilityService service, 
+            NanoHTTPD.IHTTPSession session) throws Exception {
+        JSONObject body = parseJsonBody(session);
+        String strategy = body.optString("strategy", "text");
+        String target = body.optString("target", "");
+        String action = body.optString("action", "click");
+        
+        List<AccessibilityNodeInfo> nodes = null;
+        
+        switch (strategy) {
+            case "text":
+                nodes = service.findNodesByText(target);
+                break;
+            case "id":
+                nodes = service.findNodesById(target);
+                break;
+        }
+        
+        if (nodes == null || nodes.isEmpty()) {
+            return HttpServerEngine.jsonError(
+                NanoHTTPD.Response.Status.NOT_FOUND, 
+                "未找到节点: " + target);
+        }
+        
+        AccessibilityNodeInfo targetNode = nodes.get(0);
+        boolean success = false;
+        
+        switch (action) {
+            case "click":
+                success = service.clickNode(targetNode);
+                break;
+            case "long_click":
+                // 长按
+                break;
+            case "scroll_forward":
+                success = targetNode.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD);
+                break;
+            case "scroll_backward":
+                success = targetNode.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD);
+                break;
+        }
+        
+        for (AccessibilityNodeInfo node : nodes) {
+            node.recycle();
+        }
+        
+        // 检查等待条件
+        JSONObject wait = body.optJSONObject("wait");
+        if (wait != null && success) {
+            success = performWait(service, wait);
+        }
+        
+        return HttpServerEngine.jsonSuccess("success", success);
+    }
+    
+    /**
+     * 节点转 JSON
+     */
+    private JSONObject nodeToJson(AccessibilityNodeInfo node) {
+        JSONObject json = new JSONObject();
+        try {
+            json.put("text", node.getText() != null ? node.getText().toString() : "");
+            json.put("contentDescription", node.getContentDescription() != null ? 
+                node.getContentDescription().toString() : "");
+            json.put("className", node.getClassName() != null ? node.getClassName().toString() : "");
+            json.put("viewId", node.getViewIdResourceName());
+            json.put("clickable", node.isClickable());
+            json.put("scrollable", node.isScrollable());
+            json.put("enabled", node.isEnabled());
+            json.put("checkable", node.isCheckable());
+            json.put("checked", node.isChecked());
+            
+            android.graphics.Rect bounds = new android.graphics.Rect();
+            node.getBoundsInScreen(bounds);
+            json.put("bounds", bounds.toString());
+            
+        } catch (Exception e) {}
+        return json;
     }
     
     private JSONObject parseJsonBody(NanoHTTPD.IHTTPSession session) throws Exception {
