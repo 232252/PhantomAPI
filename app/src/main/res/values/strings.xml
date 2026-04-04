@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PhantomAPI</string>
+    <string name="service_name">Phantom 无障碍服务</string>
+    <string name="service_description">PhantomAPI 系统级控制服务。功能：原生 UI 节点感知、WebView DOM 提取、底层事件注入、网络状态监控。此服务不截取屏幕，仅通过结构化数据感知界面。</string>
+</resources>

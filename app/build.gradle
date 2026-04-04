@@ -1,0 +1,43 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.phantom.api'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.phantom.api"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.0.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // 轻量级 HTTP 服务端
+    implementation 'org.nanohttpd:nanohttpd:2.3.1'
+    implementation 'org.nanohttpd:nanohttpd-websocket:2.3.1'
+    
+    // WebSocket 客户端 (用于 CDP 协议)
+    implementation 'org.java-websocket:Java-WebSocket:1.5.3'
+    
+    // JSON 处理
+    implementation 'com.google.code.gson:gson:2.10.1'
+    
+    // Xposed API (编译时)
+    compileOnly 'de.robv.android.xposed:api:82'
+}

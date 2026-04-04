@@ -1,0 +1,99 @@
+#!/sbin/sh
+# PhantomAPI - update-binary
+# Magisk 模块更新脚本
+
+#################
+# Initialization
+#################
+
+umask 022
+
+# Global vars
+TMPDIR=/dev/tmp
+PERSISTDIR=/sbin/.magisk/mirror/persist
+
+rm -rf $TMPDIR 2>/dev/null
+mkdir -p $TMPDIR
+
+# echo before loading util_functions
+ui_print() { echo "$1"; }
+
+##########
+# Env
+##########
+
+OUTFD=$2
+ZIPFILE=$3
+
+mount /data 2>/dev/null
+
+# Load utility functions
+[ -f /data/adb/magisk/util_functions.sh ] && . /data/adb/magisk/util_functions.sh
+
+# Extract prop file
+unzip -o "$ZIPFILE" module.prop -d $TMPDIR >&2
+[ ! -f $TMPDIR/module.prop ] && abort "! Unable to extract zip file!"
+
+$BOOTMODE && MODDIRNAME=modules_update || MODDIRNAME=modules
+MODULEROOT=$NVBASE/$MODDIRNAME
+MODID=`grep_prop id $TMPDIR/module.prop`
+MODPATH=$MODULEROOT/$MODID
+MODNAME=`grep_prop name $TMPDIR/module.prop`
+
+# Create mod paths
+rm -rf $MODPATH 2>/dev/null
+mkdir -p $MODPATH
+
+##########
+# Install
+##########
+
+ui_print "- Extracting module files"
+unzip -o "$ZIPFILE" -d $MODPATH >&2
+
+# Default permissions
+set_perm_recursive $MODPATH 0 0 0755 0644
+
+# Handle replace folders
+for TARGET in $REPLACE; do
+  mktouch $MODPATH$TARGET/.replace 2>/dev/null
+done
+
+# Auto mount
+SKIPMOUNT=false
+$SKIPMOUNT && touch $MODPATH/skip_mount
+
+# set_prop
+PROPFILE=false
+$PROPFILE && cp -af $MODPATH/system.prop $MODPATH/system.prop 2>/dev/null
+
+# post-fs-data
+POSTFSDATA=true
+$POSTFSDATA && set_perm $MODPATH/post-fs-data.sh 0 0 0755
+
+# service
+LATESTARTSERVICE=true
+$LATESTARTSERVICE && set_perm $MODPATH/service.sh 0 0 0755
+
+# Remove placeholder
+rm -f $MODPATH/system/placeholder 2>/dev/null
+
+# Handle remove
+if [ -f $NVBASE/modules/$MODID/remove ]; then
+  ui_print "- Remove unused module"
+  rm -rf $NVBASE/modules/$MODID
+fi
+
+ui_print "- Setting permissions"
+set_permissions
+
+##############
+# Finalizing
+##############
+
+cd /
+$BOOTMODE || recovery_cleanup
+rm -rf $TMPDIR
+
+ui_print "- Done"
+exit 0
