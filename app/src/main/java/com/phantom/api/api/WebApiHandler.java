@@ -3,9 +3,9 @@ package com.phantom.api.api;
 import android.content.Context;
 import android.util.Log;
 
-import com.phantom.api.engine.CdpBridge;
 import com.phantom.api.engine.HttpServerEngine;
-import com.phantom.api.service.PhantomAccessibilityService;
+import com.phantom.api.engine.WebViewEngine;
+import com.phantom.api.util.AppUtils;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -19,16 +19,18 @@ import fi.iki.elonen.NanoHTTPD;
 /**
  * WebView 域 API 处理器
  * 
+ * 基于 JS 注入 + 文件 IPC 架构
+ * 
  * 端点：
  * /api/web/detect - 检测 WebView 调试可用性
- * /api/web/sockets - 列出可用 DevTools Socket
+ * /api/web/sockets - 列出可用 Socket
  * /api/web/dom - 获取 DOM 树
  * /api/web/execute - 执行 JavaScript
- * /api/web/click - CDP 级别点击
- * /api/web/cdp - 原始 CDP 命令
+ * /api/web/click - WebView 内点击
  */
 public class WebApiHandler implements HttpServerEngine.ApiHandler {
     private static final String TAG = "WebApiHandler";
+    
     private final Context context;
     
     public WebApiHandler(Context context) {
@@ -39,7 +41,7 @@ public class WebApiHandler implements HttpServerEngine.ApiHandler {
     public NanoHTTPD.Response handle(NanoHTTPD.IHTTPSession session) throws Exception {
         String uri = session.getUri();
         
-        if (uri.equals("/api/web/debug") || uri.equals("/api/web/detect")) {
+        if (uri.equals("/api/web/detect")) {
             return handleDetect();
         } else if (uri.equals("/api/web/sockets")) {
             return handleListSockets();
@@ -49,8 +51,6 @@ public class WebApiHandler implements HttpServerEngine.ApiHandler {
             return handleExecute(session);
         } else if (uri.equals("/api/web/click")) {
             return handleClick(session);
-        } else if (uri.equals("/api/web/cdp")) {
-            return handleCdp(session);
         }
         
         return HttpServerEngine.jsonError(NanoHTTPD.Response.Status.NOT_FOUND, "Unknown: " + uri);
@@ -62,11 +62,14 @@ public class WebApiHandler implements HttpServerEngine.ApiHandler {
     private NanoHTTPD.Response handleDetect() throws Exception {
         JSONObject result = new JSONObject();
         
-        List<String> sockets = CdpBridge.detectDevToolsSockets();
+        List<String> sockets = WebViewEngine.detectDevToolsSockets();
+        String foreground = AppUtils.getForegroundPackage(context);
+        
         result.put("available", !sockets.isEmpty());
         result.put("socketCount", sockets.size());
-        result.put("method", "cdp");
-        result.put("status", sockets.isEmpty() ? "no_devtools" : "ready");
+        result.put("method", "js_injection");
+        result.put("status", "ready");
+        result.put("foregroundApp", foreground);
         
         JSONArray socketsArray = new JSONArray();
         for (String socket : sockets) {
@@ -81,7 +84,7 @@ public class WebApiHandler implements HttpServerEngine.ApiHandler {
      * 列出可用 Socket
      */
     private NanoHTTPD.Response handleListSockets() throws Exception {
-        List<String> sockets = CdpBridge.detectDevToolsSockets();
+        List<String> sockets = WebViewEngine.detectDevToolsSockets();
         
         JSONObject result = new JSONObject();
         JSONArray array = new JSONArray();
@@ -103,13 +106,9 @@ public class WebApiHandler implements HttpServerEngine.ApiHandler {
      * 获取 Socket 类型
      */
     private String getSocketType(String socket) {
-        if (socket.contains("chrome_devtools")) {
-            return "chrome";
-        } else if (socket.contains("webview")) {
-            return "webview";
-        } else if (socket.contains("stetho")) {
-            return "stetho";
-        }
+        if (socket.contains("chrome_devtools")) return "chrome";
+        if (socket.contains("webview")) return "webview";
+        if (socket.contains("stetho")) return "stetho";
         return "unknown";
     }
     
@@ -118,28 +117,16 @@ public class WebApiHandler implements HttpServerEngine.ApiHandler {
      */
     private NanoHTTPD.Response handleGetDom(NanoHTTPD.IHTTPSession session) throws Exception {
         Map<String, String> params = parseQueryParams(session);
-        String socketName = params.get("socket");
+        String packageName = params.get("package");
         
-        if (socketName == null || socketName.isEmpty()) {
-            // 自动选择第一个可用 socket
-            List<String> sockets = CdpBridge.detectDevToolsSockets();
-            if (sockets.isEmpty()) {
-                return HttpServerEngine.jsonError(
-                    NanoHTTPD.Response.Status.NOT_FOUND, 
-                    "没有可用的 DevTools Socket");
-            }
-            socketName = sockets.get(0);
+        if (packageName == null || packageName.isEmpty()) {
+            packageName = AppUtils.getForegroundPackage(context);
         }
         
-        JSONObject dom = CdpBridge.getDOM(socketName);
-        if (dom == null) {
-            return HttpServerEngine.jsonError(
-                NanoHTTPD.Response.Status.INTERNAL_ERROR, 
-                "获取 DOM 失败");
-        }
+        JSONObject dom = WebViewEngine.getDOM(context, packageName);
         
         JSONObject result = new JSONObject();
-        result.put("socket", socketName);
+        result.put("package", packageName);
         result.put("dom", dom);
         
         return HttpServerEngine.jsonSuccess(result);
@@ -151,7 +138,7 @@ public class WebApiHandler implements HttpServerEngine.ApiHandler {
     private NanoHTTPD.Response handleExecute(NanoHTTPD.IHTTPSession session) throws Exception {
         JSONObject body = parseJsonBody(session);
         String script = body.optString("script", "");
-        String socketName = body.optString("socket", "");
+        String packageName = body.optString("package", "");
         
         if (script.isEmpty()) {
             return HttpServerEngine.jsonError(
@@ -159,107 +146,81 @@ public class WebApiHandler implements HttpServerEngine.ApiHandler {
                 "需要 script 参数");
         }
         
-        if (socketName.isEmpty()) {
-            List<String> sockets = CdpBridge.detectDevToolsSockets();
-            if (sockets.isEmpty()) {
-                return HttpServerEngine.jsonError(
-                    NanoHTTPD.Response.Status.NOT_FOUND, 
-                    "没有可用的 DevTools Socket");
-            }
-            socketName = sockets.get(0);
+        if (packageName.isEmpty()) {
+            packageName = AppUtils.getForegroundPackage(context);
         }
         
-        JSONObject result = CdpBridge.evaluateJavaScript(socketName, script);
+        JSONObject result = WebViewEngine.evaluateJavaScript(context, packageName, script);
         
         JSONObject response = new JSONObject();
         response.put("executed", true);
-        response.put("socket", socketName);
+        response.put("package", packageName);
         response.put("result", result);
         
         return HttpServerEngine.jsonSuccess(response);
     }
     
     /**
-     * CDP 级别点击
+     * WebView 内点击
      */
     private NanoHTTPD.Response handleClick(NanoHTTPD.IHTTPSession session) throws Exception {
         JSONObject body = parseJsonBody(session);
-        int x = body.getInt("x");
-        int y = body.getInt("y");
-        String socketName = body.optString("socket", "");
+        String packageName = body.optString("package", "");
+        String selector = body.optString("selector", "");
+        int x = body.optInt("x", 0);
+        int y = body.optInt("y", 0);
         
-        if (socketName.isEmpty()) {
-            List<String> sockets = CdpBridge.detectDevToolsSockets();
-            if (sockets.isEmpty()) {
-                return HttpServerEngine.jsonError(
-                    NanoHTTPD.Response.Status.NOT_FOUND, 
-                    "没有可用的 DevTools Socket");
-            }
-            socketName = sockets.get(0);
+        if (packageName.isEmpty()) {
+            packageName = AppUtils.getForegroundPackage(context);
         }
         
-        boolean success = CdpBridge.clickAt(socketName, x, y);
+        boolean success = WebViewEngine.clickAt(context, packageName, selector, x, y);
         
-        JSONObject response = new JSONObject();
-        response.put("clicked", success);
-        response.put("x", x);
-        response.put("y", y);
-        response.put("socket", socketName);
+        JSONObject result = new JSONObject();
+        result.put("clicked", success);
+        result.put("package", packageName);
+        if (!selector.isEmpty()) {
+            result.put("selector", selector);
+        } else {
+            result.put("x", x);
+            result.put("y", y);
+        }
         
-        return HttpServerEngine.jsonSuccess(response);
+        return HttpServerEngine.jsonSuccess(result);
     }
     
     /**
-     * 原始 CDP 命令
+     * 解析查询参数
      */
-    private NanoHTTPD.Response handleCdp(NanoHTTPD.IHTTPSession session) throws Exception {
-        JSONObject body = parseJsonBody(session);
-        String method = body.getString("method");
-        JSONObject params = body.optJSONObject("params");
-        String socketName = body.optString("socket", "");
-        
-        if (socketName.isEmpty()) {
-            List<String> sockets = CdpBridge.detectDevToolsSockets();
-            if (sockets.isEmpty()) {
-                return HttpServerEngine.jsonError(
-                    NanoHTTPD.Response.Status.NOT_FOUND, 
-                    "没有可用的 DevTools Socket");
-            }
-            socketName = sockets.get(0);
-        }
-        
-        CdpBridge.CdpConnection conn = CdpBridge.connect(socketName);
-        if (conn == null) {
-            return HttpServerEngine.jsonError(
-                NanoHTTPD.Response.Status.INTERNAL_ERROR, 
-                "连接 DevTools 失败");
-        }
-        
-        JSONObject result = conn.sendCommand(method, params);
-        
-        JSONObject response = new JSONObject();
-        response.put("method", method);
-        response.put("status", "executed");
-        response.put("socket", socketName);
-        response.put("result", result);
-        
-        return HttpServerEngine.jsonSuccess(response);
-    }
-    
-    private JSONObject parseJsonBody(NanoHTTPD.IHTTPSession session) throws Exception {
-        Map<String, String> files = new HashMap<>();
-        session.parseBody(files);
-        String body = files.get("postData");
-        return new JSONObject(body != null ? body : "{}");
-    }
-    
     private Map<String, String> parseQueryParams(NanoHTTPD.IHTTPSession session) {
         Map<String, String> params = new HashMap<>();
-        for (Map.Entry<String, List<String>> entry : session.getParameters().entrySet()) {
-            if (!entry.getValue().isEmpty()) {
-                params.put(entry.getKey(), entry.getValue().get(0));
+        try {
+            Map<String, List<String>> query = session.getParameters();
+            for (Map.Entry<String, List<String>> entry : query.entrySet()) {
+                if (!entry.getValue().isEmpty()) {
+                    params.put(entry.getKey(), entry.getValue().get(0));
+                }
             }
+        } catch (Exception e) {
+            Log.e(TAG, "解析参数失败: " + e.getMessage());
         }
         return params;
+    }
+    
+    /**
+     * 解析 JSON 请求体
+     */
+    private JSONObject parseJsonBody(NanoHTTPD.IHTTPSession session) {
+        try {
+            Map<String, String> files = new HashMap<>();
+            session.parseBody(files);
+            String body = files.get("postData");
+            if (body != null && !body.isEmpty()) {
+                return new JSONObject(body);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "解析 JSON 失败: " + e.getMessage());
+        }
+        return new JSONObject();
     }
 }
