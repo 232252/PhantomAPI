@@ -73,3 +73,15 @@ export ANDROID_HOME=/path/to/android-sdk
 ## 许可证
 
 MIT License
+
+## CoPaw 技能
+
+配套 CoPaw 技能位于 `skills/phantom_api/` 目录，提供便捷的 CLI 工具：
+
+```bash
+# 使用 CLI 工具
+./skills/phantom_api/phantom_api.sh <device_ip> ping
+./skills/phantom_api/phantom_api.sh <device_ip> info
+./skills/phantom_api/phantom_api.sh <device_ip> find 设置
+./skills/phantom_api/phantom_api.sh <device_ip> tap 540 960
+```
