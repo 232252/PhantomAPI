@@ -403,7 +403,7 @@ done
 
 ```python
 #!/usr/bin/env python3
-"""PhantomAPI Python SDK v3.0"""
+"""PhantomAPI Python SDK v4.0 - 支持 v1.4.0 所有 API"""
 import requests
 import time
 
@@ -418,7 +418,7 @@ class PhantomAPI:
     def _post(self, endpoint, data):
         return self.session.post(f"{self.base_url}{endpoint}", json=data, timeout=5).json()
     
-    # 基础
+    # ========== 基础 API ==========
     def ping(self):
         return self._get("/api/ping")
     
@@ -428,7 +428,7 @@ class PhantomAPI:
     def activity(self):
         return self._get("/api/sys/activity")
     
-    # UI
+    # ========== UI API ==========
     def find(self, text, clickable=True):
         return self._get(f"/api/ui/find?text={text}&clickable={clickable}")
     
@@ -474,12 +474,164 @@ class PhantomAPI:
     def wait_disappear(self, text, timeout=5000):
         return self.wait(text, "text_disappear", timeout).get('success', False)
     
-    def safe_back(self, package, max_tries=5):
-        return self._post("/api/ui/safe_back", {
-            "check_package": package, "max_tries": max_tries
+    # ========== 应用管理 API ==========
+    def app_list(self):
+        """获取已安装应用列表"""
+        return self._get("/api/app/list")
+    
+    def app_launch(self, package):
+        """启动应用"""
+        return self._post("/api/app/launch", {"packageName": package})
+    
+    def app_stop(self, package):
+        """停止应用"""
+        return self._post("/api/app/stop", {"packageName": package})
+    
+    def app_current(self):
+        """获取当前前台应用"""
+        return self._get("/api/app/current")
+    
+    # ========== 剪贴板 API ==========
+    def clipboard_get(self):
+        """读取剪贴板"""
+        return self._get("/api/clipboard/get")
+    
+    def clipboard_set(self, text):
+        """设置剪贴板"""
+        return self._post("/api/clipboard/set", {"text": text})
+    
+    # ========== Shell API ==========
+    def shell(self, command):
+        """执行 Shell 命令"""
+        return self._post("/api/shell/exec", {"command": command})
+    
+    # ========== 文件 API ==========
+    def file_list(self, path="/sdcard"):
+        """列出目录"""
+        return self._post("/api/file/list", {"path": path})
+    
+    def file_read(self, path):
+        """读取文件"""
+        return self._post("/api/file/read", {"path": path})
+    
+    def file_write(self, path, content):
+        """写入文件"""
+        return self._post("/api/file/write", {"path": path, "content": content})
+    
+    def file_exists(self, path):
+        """检查文件存在"""
+        return self._post("/api/file/exists", {"path": path})
+    
+    # ========== WebView API ==========
+    def webview_eval(self, script):
+        """在 WebView 中执行 JS"""
+        return self._post("/api/webview/eval", {"script": script})
+    
+    def webview_click(self, selector=None, x=None, y=None):
+        """WebView 元素点击"""
+        if selector:
+            return self._post("/api/webview/click", {"selector": selector})
+        return self._post("/api/webview/click", {"x": x, "y": y})
+    
+    def webview_input(self, selector, text):
+        """WebView 输入"""
+        return self._post("/api/webview/input", {"selector": selector, "text": text})
+    
+    # ========== 高级手势 API (v1.4.0) ==========
+    def gesture_swipe(self, direction, distance=500, duration=300):
+        """方向滑动 (up/down/left/right)"""
+        return self._post("/api/gesture/swipe", {
+            "direction": direction, "distance": distance, "duration": duration
         })
     
-    # 高级操作
+    def gesture_fling(self, direction):
+        """快速滑动"""
+        return self._post("/api/gesture/fling", {"direction": direction})
+    
+    def gesture_drag(self, sx, sy, ex, ey, duration=500):
+        """拖拽"""
+        return self._post("/api/gesture/drag", {
+            "startX": sx, "startY": sy, "endX": ex, "endY": ey, "duration": duration
+        })
+    
+    def gesture_pinch(self, direction="out", cx=540, cy=1200, distance=200):
+        """双指缩放"""
+        return self._post("/api/gesture/pinch", {
+            "centerX": cx, "centerY": cy, "direction": direction, "distance": distance
+        })
+    
+    def gesture_path(self, points, duration=1000):
+        """路径手势 - points: [(x1,y1), (x2,y2), ...]"""
+        pts = [{"x": p[0], "y": p[1]} for p in points]
+        return self._post("/api/gesture/path", {"points": pts, "duration": duration})
+    
+    def gesture_bezier(self, sx, sy, ex, ey, cx, cy, duration=500):
+        """贝塞尔曲线滑动"""
+        return self._post("/api/gesture/bezier", {
+            "startX": sx, "startY": sy, "endX": ex, "endY": ey,
+            "ctrlX": cx, "ctrlY": cy, "duration": duration
+        })
+    
+    def gesture_sequence(self, gestures):
+        """手势序列 - gestures: [{"type":"tap","x":540,"y":1000}, ...]"""
+        return self._post("/api/gesture/sequence", {"gestures": gestures})
+    
+    def gesture_tap(self, x, y):
+        """手势点击"""
+        return self._post("/api/gesture/tap", {"x": x, "y": y})
+    
+    def gesture_double_tap(self, x, y):
+        """双击"""
+        return self._post("/api/gesture/double_tap", {"x": x, "y": y})
+    
+    def gesture_long_press(self, x, y, duration=1000):
+        """长按"""
+        return self._post("/api/gesture/long_press", {"x": x, "y": y, "duration": duration})
+    
+    def gesture_scroll(self, direction="down", distance=500):
+        """滚动"""
+        return self._post("/api/gesture/scroll", {"direction": direction, "distance": distance})
+    
+    def gesture_pattern(self, points, start_x=100, start_y=500, cell_size=200):
+        """图案解锁 - points: [0,4,8] 表示 3x3 网格点位"""
+        return self._post("/api/gesture/pattern", {
+            "points": points, "startX": start_x, "startY": start_y, "cellSize": cell_size
+        })
+    
+    # ========== 浏览器注入 API (v1.4.0) ==========
+    def browser_form_fill(self, data):
+        """表单填充 - data: {"username":"xxx","password":"xxx"}"""
+        return self._post("/api/browser/form/fill", {"data": data})
+    
+    def browser_form_submit(self, selector="form"):
+        """表单提交"""
+        return self._post("/api/browser/form/submit", {"selector": selector})
+    
+    def browser_xpath(self, xpath):
+        """XPath 查询"""
+        return self._post("/api/browser/xpath", {"xpath": xpath})
+    
+    def browser_query_all(self, selector):
+        """CSS 选择器批量查询"""
+        return self._post("/api/browser/queryAll", {"selector": selector})
+    
+    def browser_attr_get(self, selector, attr):
+        """获取元素属性"""
+        return self._post("/api/browser/attr/get", {"selector": selector, "attr": attr})
+    
+    def browser_attr_set(self, selector, attr, value):
+        """设置元素属性"""
+        return self._post("/api/browser/attr/set", {"selector": selector, "attr": attr, "value": value})
+    
+    def browser_css_get(self, selector, prop):
+        """获取元素样式"""
+        return self._post("/api/browser/css/get", {"selector": selector, "property": prop})
+    
+    def browser_table(self, selector, headers=True):
+        """提取表格数据"""
+        return self._post("/api/browser/table", {"selector": selector, "headers": headers})
+    
+    # ========== 高级操作 ==========
     def tap_and_wait(self, text, wait_text, timeout=5000):
         """点击并等待结果"""
         self.tap(text=text, clickable=True)
@@ -502,23 +654,44 @@ class PhantomAPI:
             results.append(self.tap(x, y))
             time.sleep(interval)
         return results
+    
+    def input_text(self, text):
+        """中文输入（通过剪贴板）"""
+        return self._post("/api/advanced/input", {"text": text})
 
 
-# 使用示例
+# ========== 使用示例 ==========
 if __name__ == "__main__":
     api = PhantomAPI()
     
-    # 测试
-    print(api.ping())
+    # 测试连接
+    print("Ping:", api.ping())
+    
+    # 设备信息
+    print("Device:", api.device_info())
+    
+    # 启动应用
+    api.app_launch("com.android.chrome")
+    time.sleep(2)
+    
+    # 手势操作
+    api.gesture_swipe("up", distance=500)  # 向上滑动
+    api.gesture_tap(540, 1200)  # 点击
+    api.gesture_pinch("out")  # 放大
+    
+    # 手势序列
+    api.gesture_sequence([
+        {"type": "tap", "x": 540, "y": 1000},
+        {"type": "wait", "ms": 500},
+        {"type": "swipe", "startX": 540, "startY": 1500, "endX": 540, "endY": 500, "duration": 300}
+    ])
+    
+    # 表单填充
+    api.browser_form_fill({"username": "user123", "password": "pass456"})
     
     # 点击并等待
     if api.tap_and_wait("签到", "签到成功"):
         print("签到成功！")
-    
-    # 滚动查找
-    coords = api.scroll_find("目标文字")
-    if coords:
-        api.tap(*coords)
 ```
 
 ---
@@ -864,7 +1037,7 @@ curl -X POST http://192.168.110.140:9999/api/browser/table \
 
 ---
 
-## 📋 常用操作速查表 (更新)
+## 📋 常用操作速查表
 
 | 需求 | 命令 |
 |------|------|
@@ -899,6 +1072,16 @@ curl -X POST http://192.168.110.140:9999/api/browser/table \
 | **通知列表** | `GET /api/notify/list` |
 | **文件列表** | `POST /api/file/list {"path":"/sdcard"}` |
 | **WebView注入** | `POST /api/webview/eval {"script":"document.title"}` |
+| **手势-方向滑动** | `POST /api/gesture/swipe {"direction":"up","distance":500}` |
+| **手势-快速滑动** | `POST /api/gesture/fling {"direction":"up"}` |
+| **手势-缩放** | `POST /api/gesture/pinch {"direction":"out","distance":200}` |
+| **手势-路径** | `POST /api/gesture/path {"points":[{"x":100,"y":1000},{"x":500,"y":500}]}` |
+| **手势-序列** | `POST /api/gesture/sequence {"gestures":[{"type":"tap","x":540,"y":1000}]}` |
+| **手势-图案解锁** | `POST /api/gesture/pattern {"points":[0,4,8,5,2]}` |
+| **浏览器-表单填充** | `POST /api/browser/form/fill {"data":{"user":"xxx","pass":"xxx"}}` |
+| **浏览器-XPath** | `POST /api/browser/xpath {"xpath":"//div[@class=\"content\"]"}` |
+| **浏览器-属性** | `POST /api/browser/attr/get {"selector":"#id","attr":"value"}` |
+| **浏览器-表格** | `POST /api/browser/table {"selector":"table","headers":true}` |
 
 ---
 
