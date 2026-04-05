@@ -688,6 +688,14 @@ class PhantomAPI:
         """创建目录"""
         return self._post("/api/file/mkdir", {"path": path})
     
+    def file_copy(self, src, dst):
+        """复制文件"""
+        return self._post("/api/file/copy", {"src": src, "dst": dst})
+    
+    def file_move(self, src, dst):
+        """移动文件"""
+        return self._post("/api/file/move", {"src": src, "dst": dst})
+    
     # ========== 应用管理 API (补充) ==========
     def app_recent(self):
         """最近应用列表"""
@@ -1211,6 +1219,22 @@ curl -X POST http://192.168.110.140:9999/api/file/mkdir \
   -d '{"path":"/sdcard/newdir"}'
 ```
 
+### 复制文件
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/file/copy \
+  -H "Content-Type: application/json" \
+  -d '{"src":"/sdcard/file.txt","dst":"/sdcard/backup/file.txt"}'
+```
+
+### 移动文件
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/file/move \
+  -H "Content-Type: application/json" \
+  -d '{"src":"/sdcard/file.txt","dst":"/sdcard/newdir/file.txt"}'
+```
+
 ---
 
 ## 📱 应用管理 API (补充)
@@ -1280,6 +1304,8 @@ curl http://192.168.110.140:9999/api/app/recent
 | **文件-追加** | `POST /api/file/append {"path":"/sdcard/log.txt","content":"xxx"}` |
 | **文件-删除** | `POST /api/file/delete {"path":"/sdcard/temp.txt"}` |
 | **文件-创建目录** | `POST /api/file/mkdir {"path":"/sdcard/newdir"}` |
+| **文件-复制** | `POST /api/file/copy {"src":"/sdcard/a.txt","dst":"/sdcard/b.txt"}` |
+| **文件-移动** | `POST /api/file/move {"src":"/sdcard/a.txt","dst":"/sdcard/dir/a.txt"}` |
 | **应用-最近列表** | `GET /api/app/recent` |
 
 ---
