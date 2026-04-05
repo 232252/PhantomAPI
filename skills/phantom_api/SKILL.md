@@ -523,6 +523,132 @@ if __name__ == "__main__":
 
 ---
 
+## 🔥 高级 API (v1.1新增)
+
+### 文本输入（支持中文）
+
+```bash
+# 通过剪贴板输入中文
+curl -X POST http://192.168.110.140:9999/api/advanced/input \
+  -H "Content-Type: application/json" \
+  -d '{"text":"你好世界"}'
+```
+
+**返回**: `{"success":true,"method":"clipboard_paste","length":5}`
+
+---
+
+### 清除输入框
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/advanced/clear
+```
+
+清除当前焦点的输入框内容。
+
+---
+
+### 长按
+
+```bash
+# 坐标长按
+curl -X POST http://192.168.110.140:9999/api/advanced/long_press \
+  -H "Content-Type: application/json" \
+  -d '{"x":540,"y":960,"duration":1000}'
+
+# 文本长按
+curl -X POST http://192.168.110.140:9999/api/advanced/long_press \
+  -H "Content-Type: application/json" \
+  -d '{"text":"复制","duration":500}'
+```
+
+---
+
+### 双击
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/advanced/double_tap \
+  -H "Content-Type: application/json" \
+  -d '{"x":540,"y":960}'
+```
+
+---
+
+### 拖拽
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/advanced/drag \
+  -H "Content-Type: application/json" \
+  -d '{"startX":540,"startY":1500,"endX":540,"endY":500,"duration":500}'
+```
+
+---
+
+### 缩放手势
+
+```bash
+# 放大
+curl -X POST http://192.168.110.140:9999/api/advanced/pinch \
+  -H "Content-Type: application/json" \
+  -d '{"centerX":540,"centerY":1200,"direction":"out","distance":300}'
+
+# 缩小
+curl -X POST http://192.168.110.140:9999/api/advanced/pinch \
+  -H "Content-Type: application/json" \
+  -d '{"centerX":540,"centerY":1200,"direction":"in","distance":300}'
+```
+
+---
+
+### 按键事件
+
+```bash
+# 返回键
+curl -X POST http://192.168.110.140:9999/api/advanced/keyevent \
+  -H "Content-Type: application/json" \
+  -d '{"key":"back"}'
+
+# 主页键
+curl -X POST http://192.168.110.140:9999/api/advanced/keyevent \
+  -H "Content-Type: application/json" \
+  -d '{"key":"home"}'
+
+# 支持的按键: home, back, menu, enter, del, volume_up, volume_down, power, tab, dpad_up/down/left/right
+```
+
+---
+
+### 滚动到元素
+
+```bash
+# 向下滚动查找"积分"元素，最多滚动10次
+curl -X POST http://192.168.110.140:9999/api/advanced/scroll_to \
+  -H "Content-Type: application/json" \
+  -d '{"text":"积分","max_scrolls":10,"direction":"down"}'
+```
+
+**返回**: `{"success":true,"found":true,"scrolls":3}`
+
+---
+
+### 批量操作
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/advanced/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "actions": [
+      {"type":"tap","x":540,"y":500},
+      {"type":"wait","ms":500},
+      {"type":"swipe","startX":540,"startY":1500,"endX":540,"endY":500}
+    ]
+  }'
+```
+
+**返回**: `{"success":true,"results":[{"success":true},{"success":true},{"success":true}]}`
+
+---
+
 ## 📋 常用操作速查表
 
 | 需求 | 命令 |
@@ -539,6 +665,15 @@ if __name__ == "__main__":
 | 回桌面 | `GET /api/ui/home` |
 | 向上滑 | `POST /api/ui/swipe {"startX":540,"startY":1500,"endX":540,"endY":500}` |
 | 安全返回 | `POST /api/ui/safe_back {"check_package":"包名"}` |
+| **中文输入** | `POST /api/advanced/input {"text":"你好"}` |
+| **清除输入** | `POST /api/advanced/clear` |
+| **长按** | `POST /api/advanced/long_press {"x":540,"y":960,"duration":1000}` |
+| **双击** | `POST /api/advanced/double_tap {"x":540,"y":960}` |
+| **拖拽** | `POST /api/advanced/drag {"startX":540,"startY":1500,"endX":540,"endY":500}` |
+| **缩放** | `POST /api/advanced/pinch {"direction":"out","distance":300}` |
+| **按键** | `POST /api/advanced/keyevent {"key":"back"}` |
+| **滚动查找** | `POST /api/advanced/scroll_to {"text":"积分","max_scrolls":10}` |
+| **批量操作** | `POST /api/advanced/batch {"actions":[...]}` |
 
 ---
 

@@ -218,6 +218,83 @@ class PhantomAPI:
         """检查应用是否在前台"""
         current = self.foreground()
         return package in current.get('packageName', '')
+    
+    # ===== 高级手势操作 (v1.1新增) =====
+    
+    def input_text(self, text: str) -> Dict:
+        """文本输入（支持中文，通过剪贴板）"""
+        return self._post("/api/advanced/input", {"text": text})
+    
+    def clear_input(self) -> Dict:
+        """清除当前输入框"""
+        return self._post("/api/advanced/clear", {})
+    
+    def long_press(self, x: int = None, y: int = None, text: str = None, duration: int = 1000) -> Dict:
+        """长按"""
+        body = {"duration": duration}
+        if x is not None and y is not None:
+            body["x"], body["y"] = x, y
+        if text:
+            body["text"] = text
+        return self._post("/api/advanced/long_press", body)
+    
+    def double_tap(self, x: int = None, y: int = None, text: str = None) -> Dict:
+        """双击"""
+        body = {}
+        if x is not None and y is not None:
+            body["x"], body["y"] = x, y
+        if text:
+            body["text"] = text
+        return self._post("/api/advanced/double_tap", body)
+    
+    def drag(self, start_x: int, start_y: int, end_x: int, end_y: int, duration: int = 500) -> Dict:
+        """拖拽"""
+        return self._post("/api/advanced/drag", {
+            "startX": start_x, "startY": start_y,
+            "endX": end_x, "endY": end_y,
+            "duration": duration
+        })
+    
+    def pinch(self, center_x: int = 540, center_y: int = 1200, 
+              direction: str = "out", distance: int = 200, duration: int = 500) -> Dict:
+        """缩放手势"""
+        return self._post("/api/advanced/pinch", {
+            "centerX": center_x, "centerY": center_y,
+            "direction": direction, "distance": distance, "duration": duration
+        })
+    
+    def pinch_out(self, center_x: int = 540, center_y: int = 1200, distance: int = 300) -> Dict:
+        """放大"""
+        return self.pinch(center_x, center_y, "out", distance)
+    
+    def pinch_in(self, center_x: int = 540, center_y: int = 1200, distance: int = 300) -> Dict:
+        """缩小"""
+        return self.pinch(center_x, center_y, "in", distance)
+    
+    def keyevent(self, key: str) -> Dict:
+        """按键事件
+        
+        支持的按键: home, back, menu, enter, del, volume_up, volume_down, power, tab
+        """
+        return self._post("/api/advanced/keyevent", {"key": key})
+    
+    def scroll_to(self, text: str, max_scrolls: int = 10, direction: str = "down") -> Dict:
+        """滚动到指定元素"""
+        return self._post("/api/advanced/scroll_to", {
+            "text": text, "max_scrolls": max_scrolls, "direction": direction
+        })
+    
+    def batch_actions(self, actions: List[Dict]) -> Dict:
+        """批量执行操作
+        
+        actions 格式:
+        [
+            {"type": "tap", "x": 540, "y": 500},
+            {"type": "wait", "ms": 500},
+            {"type": "swipe", "startX": 540, "startY": 1500, "endX": 540, "endY": 500}
+        ]
+        """
+        return self._post("/api/advanced/batch", {"actions": actions})
 
 
 # 使用示例
