@@ -54,9 +54,32 @@
 | 端点 | 方法 | 功能 | 参数 |
 |------|------|------|------|
 | `/api/ui/tree` | GET | 获取 Accessibility UI 树 | - |
-| `/api/ui/tap` | POST | 坐标点击 | `{"x":100,"y":200}` |
+| `/api/ui/find` | GET | 查找节点 | `text`, `clickable`, `upward` |
+| `/api/ui/tap` | POST | 点击坐标或文本 | `{"x":100,"y":200}` 或 `{"text":"签到","clickable":true}` |
 | `/api/ui/swipe` | POST | 滑动 | `{"startX":100,"startY":100,"endX":200,"endY":200}` |
 | `/api/ui/back` | POST | 返回键 | - |
+| `/api/ui/home` | GET | 回到桌面 | - |
+| `/api/ui/wait` | POST | 显式等待 | `{"mode":"text_appear","text":"成功","timeout_ms":5000}` |
+| `/api/ui/action` | POST | 节点操作 | `{"action":"click","text":"签到"}` |
+| `/api/ui/safe_back` | POST | 安全返回 | `{"max_tries":5,"check_package":"com.xxx"}` |
+
+### 系统 API (`/api/sys/*`)
+
+| 端点 | 方法 | 功能 |
+|------|------|------|
+| `/api/sys/info` | GET | 设备信息 |
+| `/api/sys/foreground` | GET | 前台应用包名 |
+| `/api/sys/activity` | GET | 前台 Activity 完整信息 |
+| `/api/sys/packages` | GET | 已安装应用列表 |
+
+### 网络 API (`/api/net/*`)
+
+| 端点 | 方法 | 功能 |
+|------|------|------|
+| `/api/net/status` | GET | 网络状态 |
+| `/api/net/wifi` | GET | WiFi 信息 |
+| `/api/net/connections` | GET | 连接拓扑（支持 `?package=xxx` 过滤） |
+| `/api/net/traffic` | GET | 流量统计 |
 
 ## WebView DOM 提取机制
 

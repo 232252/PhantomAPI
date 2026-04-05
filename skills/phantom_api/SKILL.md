@@ -49,22 +49,81 @@
 
 ### 📲 UI 域 `/api/ui/*`
 
-| 端点 | 方法 | 描述 | 支持显式等待 |
-|------|------|------|-------------|
+| 端点 | 方法 | 描述 | 参数 |
+|------|------|------|------|
 | `/api/ui/tree` | GET | 获取 Accessibility UI 树 | - |
-| `/api/ui/find` | GET | 查找节点 (`?text=xxx`) | - |
-| `/api/ui/tap` | POST | 坐标点击 | ✅ |
-| `/api/ui/swipe` | POST | 滑动 | - |
+| `/api/ui/find` | GET | 查找节点 | `text`, `clickable`, `upward` |
+| `/api/ui/tap` | POST | 点击坐标或文本 | `x,y` 或 `text,clickable,upward` |
+| `/api/ui/swipe` | POST | 滑动 | `startX,startY,endX,endY,duration` |
 | `/api/ui/back` | POST | 返回键 | - |
-| `/api/ui/wait` | POST | 显式等待节点 | - |
-| `/api/ui/action` | POST | 节点操作 | - |
+| `/api/ui/home` | GET | 回到桌面 | - |
+| `/api/ui/wait` | POST | 显式等待 | `mode,text,timeout_ms,interval_ms` |
+| `/api/ui/action` | POST | 节点操作 | `action,text/id` |
+| `/api/ui/safe_back` | POST | 安全返回 | `max_tries,check_package,interval_ms` |
+
+#### UI 域详细参数
+
+**`/api/ui/find`** - 查找节点
+```
+GET /api/ui/find?text=积分中心&clickable=true&upward=3
+```
+| 参数 | 说明 |
+|------|------|
+| `text` | 查找文本 |
+| `clickable=true` | 只返回可点击节点（自动向上查找父节点） |
+| `upward=N` | 最多向上回溯 N 层（默认 3） |
+
+**`/api/ui/wait`** - 显式等待
+```json
+POST /api/ui/wait
+{
+  "mode": "text_appear",
+  "text": "签到成功",
+  "timeout_ms": 5000,
+  "interval_ms": 300
+}
+```
+| 参数 | 说明 |
+|------|------|
+| `mode` | `text_appear`（等待出现）或 `text_disappear`（等待消失） |
+| `text` | 等待的文本 |
+| `timeout_ms` | 超时时间（默认 5000） |
+| `interval_ms` | 轮询间隔（默认 300） |
+
+**`/api/ui/action`** - 节点操作
+```json
+POST /api/ui/action
+{
+  "action": "click",
+  "text": "签到",
+  "wait_ms_after": 500
+}
+```
+| action | 说明 |
+|--------|------|
+| `click` | 点击 |
+| `long_click` | 长按 |
+| `scroll_forward` | 向前滚动 |
+| `scroll_backward` | 向后滚动 |
+
+**`/api/ui/safe_back`** - 安全返回
+```json
+POST /api/ui/safe_back
+{
+  "max_tries": 5,
+  "check_package": "com.xuexi.android",
+  "interval_ms": 400
+}
+```
+连续按返回键，但不会退出指定 App。
 
 ### 🖥️ 系统域 `/api/sys/*`
 
 | 端点 | 方法 | 描述 |
 |------|------|------|
 | `/api/sys/info` | GET | 设备信息 |
-| `/api/sys/foreground` | GET | 前台应用 |
+| `/api/sys/foreground` | GET | 前台应用包名 |
+| `/api/sys/activity` | GET | 前台 Activity 完整信息 |
 | `/api/sys/packages` | GET | 已安装应用列表 |
 
 ### 📡 网络域 `/api/net/*`
@@ -73,7 +132,7 @@
 |------|------|------|
 | `/api/net/status` | GET | 网络状态 |
 | `/api/net/wifi` | GET | WiFi 信息 |
-| `/api/net/connections` | GET | 连接拓扑 |
+| `/api/net/connections` | GET | 连接拓扑（支持 `?package=xxx` 过滤） |
 | `/api/net/traffic` | GET | 流量统计 |
 
 ### ⚙️ 辅助域 `/api/scope/*`

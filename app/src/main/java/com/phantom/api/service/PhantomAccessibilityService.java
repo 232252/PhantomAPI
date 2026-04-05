@@ -260,6 +260,27 @@ public class PhantomAccessibilityService extends AccessibilityService {
     }
     
     /**
+     * 在指定坐标长按
+     */
+    public boolean performLongClick(int x, int y) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            return false;
+        }
+        
+        Path clickPath = new Path();
+        clickPath.moveTo(x, y);
+        
+        // 长按 500ms
+        GestureDescription.StrokeDescription longClickStroke = 
+            new GestureDescription.StrokeDescription(clickPath, 0, 500);
+        GestureDescription gesture = new GestureDescription.Builder()
+            .addStroke(longClickStroke)
+            .build();
+        
+        return dispatchGesture(gesture, null, null);
+    }
+    
+    /**
      * 使用手势执行点击 (Android 7.0+)
      */
     private boolean performGestureClick(int x, int y) {

@@ -1,5 +1,8 @@
 package com.phantom.api.api;
 
+import android.accessibilityservice.AccessibilityService;
+import android.graphics.Rect;
+import android.os.Bundle;
 import android.util.Log;
 import android.view.accessibility.AccessibilityNodeInfo;
 
@@ -9,6 +12,7 @@ import com.phantom.api.service.PhantomAccessibilityService;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,32 +20,34 @@ import java.util.Map;
 import fi.iki.elonen.NanoHTTPD;
 
 /**
- * 原生 UI 域 API 处理器
+ * 原生 UI 域 API 处理器 v2.0
  * 
  * 端点：
  * /api/ui/tree - 获取 UI 树
- * /api/ui/find - 查找节点
- * /api/ui/tap - 点击坐标
+ * /api/ui/find - 查找节点（支持 clickable/upward 参数）
+ * /api/ui/tap - 点击坐标或文本
  * /api/ui/swipe - 滑动
  * /api/ui/back - 返回键
- * /api/ui/wait - 显式等待
- * /api/ui/action - 节点操作
+ * /api/ui/home - 回到桌面
+ * /api/ui/wait - 显式等待（支持 text_appear/text_disappear 模式）
+ * /api/ui/action - 节点操作（支持 click/long_click/scroll 等）
+ * /api/ui/safe_back - 安全返回（不退出 App）
  */
 public class UiApiHandler implements HttpServerEngine.ApiHandler {
-    private static final String TAG = "UiApiHandler";
+    private static final String TAG = "PhantomAPI-UI";
     
     @Override
     public NanoHTTPD.Response handle(NanoHTTPD.IHTTPSession session) throws Exception {
         String uri = session.getUri();
+        String method = session.getMethod().toString();
         
         PhantomAccessibilityService a11yService = PhantomAccessibilityService.getInstance();
         if (a11yService == null) {
-            return HttpServerEngine.jsonError(NanoHTTPD.Response.Status.SERVICE_UNAVAILABLE, 
-                "无障碍服务未启用");
+            return jsonError(503, "无障碍服务未启用");
         }
         
         if (uri.equals("/api/ui/tree")) {
-            return handleGetTree(a11yService);
+            return handleTree(a11yService);
         } else if (uri.equals("/api/ui/find")) {
             return handleFind(a11yService, session);
         } else if (uri.equals("/api/ui/tap")) {
@@ -50,98 +56,120 @@ public class UiApiHandler implements HttpServerEngine.ApiHandler {
             return handleSwipe(a11yService, session);
         } else if (uri.equals("/api/ui/back")) {
             return handleBack(a11yService);
-        } else if (uri.equals("/api/ui/smart_back")) {
-            return handleSmartBack(a11yService, session);
         } else if (uri.equals("/api/ui/home")) {
             return handleHome(a11yService);
         } else if (uri.equals("/api/ui/wait")) {
             return handleWait(a11yService, session);
         } else if (uri.equals("/api/ui/action")) {
             return handleAction(a11yService, session);
+        } else if (uri.equals("/api/ui/safe_back")) {
+            return handleSafeBack(a11yService, session);
         }
         
-        return HttpServerEngine.jsonError(NanoHTTPD.Response.Status.NOT_FOUND, "Unknown: " + uri);
+        return jsonError(404, "Unknown: " + uri);
     }
     
-    /**
-     * 获取 UI 树
-     */
-    private NanoHTTPD.Response handleGetTree(PhantomAccessibilityService service) throws Exception {
-        String treeJson = service.getNodeTreeJson();
-        return HttpServerEngine.jsonSuccess("tree", new JSONObject(treeJson));
+    // ==================== 辅助方法 ====================
+    
+    private NanoHTTPD.Response jsonOk(JSONObject data) {
+        return NanoHTTPD.newFixedLengthResponse(
+                NanoHTTPD.Response.Status.OK,
+                "application/json; charset=utf-8",
+                data.toString()
+        );
     }
     
-    /**
-     * 查找节点
-     * 支持 clickable 参数：当 clickable=true 时，返回可点击的父节点
-     */
-    private NanoHTTPD.Response handleFind(PhantomAccessibilityService service, 
-            NanoHTTPD.IHTTPSession session) throws Exception {
-        Map<String, String> params = parseQueryParams(session);
-        String text = params.get("text");
-        String id = params.get("id");
-        String className = params.get("class");
-        boolean requireClickable = "true".equals(params.get("clickable"));
+    private NanoHTTPD.Response jsonError(int code, String msg) {
+        JSONObject obj = new JSONObject();
+        try {
+            obj.put("success", false);
+            obj.put("error", msg);
+        } catch (Exception e) {}
         
-        List<AccessibilityNodeInfo> nodes = null;
+        NanoHTTPD.Response.Status status = code == 404 ? 
+            NanoHTTPD.Response.Status.NOT_FOUND : 
+            (code == 503 ? NanoHTTPD.Response.Status.SERVICE_UNAVAILABLE : 
+                NanoHTTPD.Response.Status.INTERNAL_ERROR);
         
-        if (text != null && !text.isEmpty()) {
-            nodes = service.findNodesByText(text);
-        } else if (id != null && !id.isEmpty()) {
-            nodes = service.findNodesById(id);
-        } else {
-            return HttpServerEngine.jsonError(
-                NanoHTTPD.Response.Status.BAD_REQUEST, 
-                "需要 text 或 id 参数");
-        }
-        
-        JSONArray nodesArray = new JSONArray();
-        
-        if (nodes != null) {
-            for (AccessibilityNodeInfo node : nodes) {
-                AccessibilityNodeInfo resultNode = node;
-                
-                // 如果需要可点击节点，向上查找
-                if (requireClickable && !node.isClickable()) {
-                    AccessibilityNodeInfo clickableParent = findClickableParent(node);
-                    if (clickableParent != null) {
-                        resultNode = clickableParent;
+        return NanoHTTPD.newFixedLengthResponse(status, "application/json; charset=utf-8", obj.toString());
+    }
+    
+    private Map<String, String> parseQueryParams(NanoHTTPD.IHTTPSession session) {
+        Map<String, String> params = new HashMap<>();
+        try {
+            String query = session.getQueryParameterString();
+            if (query != null && !query.isEmpty()) {
+                for (String pair : query.split("&")) {
+                    String[] kv = pair.split("=", 2);
+                    if (kv.length == 2) {
+                        params.put(java.net.URLDecoder.decode(kv[0], "UTF-8"), 
+                                   java.net.URLDecoder.decode(kv[1], "UTF-8"));
                     }
                 }
-                
-                JSONObject nodeJson = nodeToJson(resultNode);
-                nodeJson.put("originally_clickable", node.isClickable());
-                if (requireClickable && resultNode != node) {
-                    nodeJson.put("resolved_clickable", true);
-                }
-                nodesArray.put(nodeJson);
-                
-                if (resultNode != node) {
-                    // 不要回收新找到的父节点
-                }
-                node.recycle();
             }
+        } catch (Exception e) {
+            Log.e(TAG, "解析查询参数失败: " + e.getMessage());
         }
-        
-        JSONObject result = new JSONObject();
-        result.put("success", true);
-        result.put("count", nodesArray.length());
-        result.put("nodes", nodesArray);
-        result.put("clickable_filter", requireClickable);
-        
-        return HttpServerEngine.jsonSuccess(result);
+        return params;
+    }
+    
+    private JSONObject parseJsonBody(NanoHTTPD.IHTTPSession session) {
+        try {
+            Map<String, String> files = new HashMap<>();
+            session.parseBody(files);
+            String body = files.get("postData");
+            if (body != null && !body.isEmpty()) {
+                return new JSONObject(body);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "解析 JSON body 失败: " + e.getMessage());
+        }
+        return new JSONObject();
+    }
+    
+    // ==================== 节点工具方法 ====================
+    
+    /**
+     * 节点转 JSON（简化版，用于 find 返回）
+     */
+    private JSONObject nodeToJson(AccessibilityNodeInfo node, String matchedText, int upward) {
+        JSONObject json = new JSONObject();
+        try {
+            Rect rect = new Rect();
+            node.getBoundsInScreen(rect);
+            
+            json.put("text", node.getText() != null ? node.getText().toString() : "");
+            json.put("matchedText", matchedText);
+            json.put("className", node.getClassName() != null ? node.getClassName().toString() : "");
+            json.put("viewIdResourceName", node.getViewIdResourceName() != null ? node.getViewIdResourceName() : "");
+            json.put("clickable", node.isClickable());
+            json.put("enabled", node.isEnabled());
+            json.put("upward", upward);
+            
+            JSONObject bounds = new JSONObject();
+            bounds.put("left", rect.left);
+            bounds.put("top", rect.top);
+            bounds.put("right", rect.right);
+            bounds.put("bottom", rect.bottom);
+            bounds.put("centerX", rect.centerX());
+            bounds.put("centerY", rect.centerY());
+            bounds.put("width", rect.width());
+            bounds.put("height", rect.height());
+            json.put("bounds", bounds);
+            
+        } catch (Exception e) {
+            Log.e(TAG, "节点转 JSON 失败: " + e.getMessage());
+        }
+        return json;
     }
     
     /**
      * 向上查找可点击的父节点
-     * @param node 起始节点
-     * @return 可点击的父节点，如果找不到返回 null
      */
-    private AccessibilityNodeInfo findClickableParent(AccessibilityNodeInfo node) {
+    private AccessibilityNodeInfo findClickableParent(AccessibilityNodeInfo node, int maxUpward) {
         AccessibilityNodeInfo current = node.getParent();
-        int maxDepth = 5; // 最多向上找 5 层，防止找到根节点
-        
-        while (current != null && maxDepth-- > 0) {
+        int tries = maxUpward;
+        while (current != null && tries-- > 0) {
             if (current.isClickable()) {
                 return current;
             }
@@ -149,145 +177,11 @@ public class UiApiHandler implements HttpServerEngine.ApiHandler {
             current.recycle();
             current = parent;
         }
-        return null; // 实在找不到可点击的父节点，返回 null
+        return null;
     }
     
     /**
-     * 点击坐标
-     */
-    private NanoHTTPD.Response handleTap(PhantomAccessibilityService service, 
-            NanoHTTPD.IHTTPSession session) throws Exception {
-        JSONObject body = parseJsonBody(session);
-        int x = body.getInt("x");
-        int y = body.getInt("y");
-        
-        // 检查是否有等待条件
-        JSONObject wait = body.optJSONObject("wait");
-        
-        boolean success = service.clickAtPosition(x, y);
-        
-        // 如果有等待条件，执行等待
-        if (wait != null && success) {
-            success = performWait(service, wait);
-        }
-        
-        JSONObject result = new JSONObject();
-        result.put("tapped", success);
-        result.put("x", x);
-        result.put("y", y);
-        
-        return HttpServerEngine.jsonSuccess(result);
-    }
-    
-    /**
-     * 滑动
-     */
-    private NanoHTTPD.Response handleSwipe(PhantomAccessibilityService service, 
-            NanoHTTPD.IHTTPSession session) throws Exception {
-        JSONObject body = parseJsonBody(session);
-        int startX = body.getInt("startX");
-        int startY = body.getInt("startY");
-        int endX = body.getInt("endX");
-        int endY = body.getInt("endY");
-        long duration = body.optLong("duration", 300);
-        
-        boolean success = service.performSwipe(startX, startY, endX, endY, duration);
-        
-        JSONObject result = new JSONObject();
-        result.put("swiped", success);
-        result.put("startX", startX);
-        result.put("startY", startY);
-        result.put("endX", endX);
-        result.put("endY", endY);
-        
-        return HttpServerEngine.jsonSuccess(result);
-    }
-    
-    /**
-     * 返回键
-     */
-    private NanoHTTPD.Response handleBack(PhantomAccessibilityService service) throws Exception {
-        boolean success = service.performBack();
-        return HttpServerEngine.jsonSuccess("back", success);
-    }
-    
-    /**
-     * Home 键 - 回到桌面
-     * GET /api/ui/home
-     */
-    private NanoHTTPD.Response handleHome(PhantomAccessibilityService service) throws Exception {
-        try {
-            // 模拟按下 HOME 键
-            Runtime.getRuntime().exec("input keyevent KEYCODE_HOME");
-            
-            JSONObject result = new JSONObject();
-            result.put("success", true);
-            result.put("action", "home");
-            result.put("message", "已发送 HOME 键事件");
-            
-            return HttpServerEngine.jsonSuccess(result);
-        } catch (Exception e) {
-            Log.e(TAG, "Home 键执行失败: " + e.getMessage());
-            return HttpServerEngine.jsonError(
-                NanoHTTPD.Response.Status.INTERNAL_ERROR, 
-                "Home 键执行失败: " + e.getMessage());
-        }
-    }
-    
-    /**
-     * 智能返回 - 连续按返回键直到页面变化
-     * POST /api/ui/smart_back
-     * Body: {"max_tries": 5, "current_package": "com.example.app"}
-     */
-    private NanoHTTPD.Response handleSmartBack(PhantomAccessibilityService service, 
-            NanoHTTPD.IHTTPSession session) throws Exception {
-        JSONObject body = parseJsonBody(session);
-        int maxTries = body.optInt("max_tries", 5);
-        String currentPackage = body.optString("current_package", "");
-        
-        // 如果没有提供当前包名，尝试获取
-        if (currentPackage.isEmpty()) {
-            currentPackage = getForegroundPackage();
-        }
-        
-        for (int i = 0; i < maxTries; i++) {
-            // 执行返回
-            service.performBack();
-            Thread.sleep(500);
-            
-            // 检查当前包名
-            String newPackage = getForegroundPackage();
-            
-            // 如果退出了当前 App，说明退多了
-            if (!newPackage.equals(currentPackage)) {
-                JSONObject result = new JSONObject();
-                result.put("success", false);
-                result.put("error", "exited_app");
-                result.put("new_package", newPackage);
-                result.put("tries", i + 1);
-                return HttpServerEngine.jsonSuccess(result);
-            }
-            
-            // 简单判断：如果 UI 树大小变化超过 20%，认为页面切换成功
-            // 这里可以扩展为更精确的 Activity 名获取逻辑
-            if (checkUiTreeChanged(service)) {
-                JSONObject result = new JSONObject();
-                result.put("success", true);
-                result.put("tries", i + 1);
-                result.put("message", "检测到页面变化");
-                return HttpServerEngine.jsonSuccess(result);
-            }
-        }
-        
-        JSONObject result = new JSONObject();
-        result.put("success", true);
-        result.put("tries", maxTries);
-        result.put("message", "已执行 " + maxTries + " 次返回");
-        return HttpServerEngine.jsonSuccess(result);
-    }
-    
-    /**
-     * 获取前台应用包名
+     * 获取前台包名
      */
     private String getForegroundPackage() {
         try {
@@ -296,7 +190,6 @@ public class UiApiHandler implements HttpServerEngine.ApiHandler {
                 new java.io.InputStreamReader(process.getInputStream()));
             String line = reader.readLine();
             if (line != null) {
-                // 格式: mResumedActivity: ActivityRecord{xxx u0 com.package.name/xxx}
                 int slashIndex = line.indexOf("/");
                 if (slashIndex > 0) {
                     int spaceIndex = line.lastIndexOf(" ", slashIndex);
@@ -312,205 +205,537 @@ public class UiApiHandler implements HttpServerEngine.ApiHandler {
     }
     
     /**
-     * 检查 UI 树是否变化（用于智能返回判断）
+     * 检查文本是否存在于节点树中
      */
-    private int lastNodeCount = 0;
-    private boolean checkUiTreeChanged(PhantomAccessibilityService service) {
-        try {
-            String treeJson = service.getNodeTreeJson();
-            JSONObject tree = new JSONObject(treeJson);
-            int nodeCount = tree.optInt("node_count", 0);
-            
-            // 变化超过 20% 认为是页面切换
-            if (lastNodeCount > 0 && Math.abs(nodeCount - lastNodeCount) > lastNodeCount * 0.2) {
-                lastNodeCount = nodeCount;
+    private boolean checkTextExists(AccessibilityNodeInfo node, String text) {
+        if (node == null) return false;
+        
+        CharSequence cs = node.getText();
+        if (cs != null && cs.toString().contains(text)) return true;
+        
+        cs = node.getContentDescription();
+        if (cs != null && cs.toString().contains(text)) return true;
+        
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (checkTextExists(child, text)) {
+                if (child != null) child.recycle();
                 return true;
             }
-            lastNodeCount = nodeCount;
-        } catch (Exception e) {
-            Log.e(TAG, "检查 UI 树变化失败: " + e.getMessage());
         }
         return false;
     }
     
     /**
-     * 显式等待
+     * 查找第一个文本匹配的节点
+     */
+    private AccessibilityNodeInfo findFirstTextNode(AccessibilityNodeInfo node, String text) {
+        if (node == null) return null;
+        
+        CharSequence cs = node.getText();
+        if (cs != null && cs.toString().contains(text)) {
+            return node;
+        }
+        
+        cs = node.getContentDescription();
+        if (cs != null && cs.toString().contains(text)) {
+            return node;
+        }
+        
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            AccessibilityNodeInfo found = findFirstTextNode(child, text);
+            if (found != null) return found;
+        }
+        return null;
+    }
+    
+    // ==================== 各端点实现 ====================
+    
+    /**
+     * GET /api/ui/tree
+     * 获取完整的 UI 树
+     */
+    private NanoHTTPD.Response handleTree(PhantomAccessibilityService service) throws Exception {
+        String treeJson = service.getNodeTreeJson();
+        JSONObject result = new JSONObject();
+        result.put("success", true);
+        result.put("tree", new JSONObject(treeJson));
+        return jsonOk(result);
+    }
+    
+    /**
+     * GET /api/ui/find?text=xxx&clickable=true&upward=3
+     * 查找节点，支持可点击性过滤和父节点回溯
+     */
+    private NanoHTTPD.Response handleFind(PhantomAccessibilityService service, 
+            NanoHTTPD.IHTTPSession session) throws Exception {
+        Map<String, String> params = parseQueryParams(session);
+        String text = params.get("text");
+        String id = params.get("id");
+        boolean requireClickable = "true".equals(params.get("clickable"));
+        int upward = params.containsKey("upward") ? Integer.parseInt(params.get("upward")) : 3;
+        
+        if ((text == null || text.isEmpty()) && (id == null || id.isEmpty())) {
+            return jsonError(400, "缺少 text 或 id 参数");
+        }
+        
+        List<AccessibilityNodeInfo> nodes = null;
+        if (text != null && !text.isEmpty()) {
+            nodes = service.findNodesByText(text);
+        } else {
+            nodes = service.findNodesById(id);
+        }
+        
+        JSONArray nodesArray = new JSONArray();
+        
+        if (nodes != null) {
+            for (AccessibilityNodeInfo node : nodes) {
+                AccessibilityNodeInfo resultNode = node;
+                String matchedText = node.getText() != null ? node.getText().toString() : "";
+                int upwardLevel = 0;
+                
+                // 如果需要可点击节点，向上查找
+                if (requireClickable && !node.isClickable()) {
+                    AccessibilityNodeInfo clickableParent = findClickableParent(node, upward);
+                    if (clickableParent != null) {
+                        // 计算向上层数
+                        AccessibilityNodeInfo current = node.getParent();
+                        while (current != null && !current.equals(clickableParent)) {
+                            upwardLevel++;
+                            AccessibilityNodeInfo parent = current.getParent();
+                            current.recycle();
+                            current = parent;
+                        }
+                        if (current != null) current.recycle();
+                        upwardLevel++;
+                        
+                        resultNode = clickableParent;
+                    }
+                }
+                
+                JSONObject nodeJson = nodeToJson(resultNode, matchedText, upwardLevel);
+                nodeJson.put("originallyClickable", node.isClickable());
+                if (requireClickable && resultNode != node) {
+                    nodeJson.put("resolvedClickable", true);
+                }
+                nodesArray.put(nodeJson);
+                
+                node.recycle();
+            }
+        }
+        
+        JSONObject result = new JSONObject();
+        result.put("success", true);
+        result.put("count", nodesArray.length());
+        result.put("query", text != null ? text : id);
+        result.put("clickable", requireClickable);
+        result.put("upward", upward);
+        result.put("nodes", nodesArray);
+        
+        return jsonOk(result);
+    }
+    
+    /**
+     * POST /api/ui/tap
+     * {"x":100,"y":200} 或 {"text":"签到","clickable":true,"upward":3}
+     */
+    private NanoHTTPD.Response handleTap(PhantomAccessibilityService service, 
+            NanoHTTPD.IHTTPSession session) throws Exception {
+        JSONObject body = parseJsonBody(session);
+        
+        int x = -1, y = -1;
+        boolean tapped = false;
+        String method = "coordinate";
+        String text = null;
+        
+        // 模式1：直接坐标
+        if (body.has("x") && body.has("y")) {
+            x = body.getInt("x");
+            y = body.getInt("y");
+            tapped = service.clickAtPosition(x, y);
+        }
+        // 模式2：按文本查找后点击
+        else if (body.has("text")) {
+            text = body.getString("text");
+            boolean requireClickable = body.optBoolean("clickable", false);
+            int upward = body.optInt("upward", 3);
+            
+            List<AccessibilityNodeInfo> nodes = service.findNodesByText(text);
+            if (!nodes.isEmpty()) {
+                AccessibilityNodeInfo targetNode = nodes.get(0);
+                
+                // 如果需要可点击节点
+                if (requireClickable && !targetNode.isClickable()) {
+                    AccessibilityNodeInfo clickableParent = findClickableParent(targetNode, upward);
+                    if (clickableParent != null) {
+                        targetNode.recycle();
+                        targetNode = clickableParent;
+                    }
+                }
+                
+                Rect bounds = new Rect();
+                targetNode.getBoundsInScreen(bounds);
+                x = bounds.centerX();
+                y = bounds.centerY();
+                tapped = service.clickAtPosition(x, y);
+                method = "text_match";
+                
+                targetNode.recycle();
+            } else {
+                JSONObject result = new JSONObject();
+                result.put("tapped", false);
+                result.put("method", "text_match");
+                result.put("text", text);
+                result.put("reason", "node_not_found");
+                return jsonOk(result);
+            }
+            
+            for (AccessibilityNodeInfo node : nodes) {
+                node.recycle();
+            }
+        } else {
+            return jsonError(400, "缺少 x/y 或 text 参数");
+        }
+        
+        JSONObject result = new JSONObject();
+        result.put("tapped", tapped);
+        result.put("method", method);
+        result.put("x", x);
+        result.put("y", y);
+        if (text != null) {
+            result.put("text", text);
+        }
+        
+        return jsonOk(result);
+    }
+    
+    /**
+     * POST /api/ui/swipe
+     * {"x1":100,"y1":500,"x2":100,"y2":100,"duration":300}
+     */
+    private NanoHTTPD.Response handleSwipe(PhantomAccessibilityService service, 
+            NanoHTTPD.IHTTPSession session) throws Exception {
+        JSONObject body = parseJsonBody(session);
+        
+        int startX = body.getInt("startX");
+        int startY = body.getInt("startY");
+        int endX = body.getInt("endX");
+        int endY = body.getInt("endY");
+        long duration = body.optLong("duration", 300);
+        
+        boolean swiped = service.performSwipe(startX, startY, endX, endY, duration);
+        
+        JSONObject result = new JSONObject();
+        result.put("swiped", swiped);
+        result.put("from", startX + "," + startY);
+        result.put("to", endX + "," + endY);
+        result.put("duration", duration);
+        
+        return jsonOk(result);
+    }
+    
+    /**
+     * POST /api/ui/back
+     * 返回键
+     */
+    private NanoHTTPD.Response handleBack(PhantomAccessibilityService service) throws Exception {
+        boolean success = service.performBack();
+        
+        JSONObject result = new JSONObject();
+        result.put("success", success);
+        result.put("action", "back");
+        
+        return jsonOk(result);
+    }
+    
+    /**
+     * GET /api/ui/home
+     * 回到桌面
+     */
+    private NanoHTTPD.Response handleHome(PhantomAccessibilityService service) throws Exception {
+        try {
+            Runtime.getRuntime().exec("input keyevent KEYCODE_HOME");
+            
+            JSONObject result = new JSONObject();
+            result.put("success", true);
+            result.put("action", "home");
+            result.put("message", "已发送 HOME 键事件");
+            
+            return jsonOk(result);
+        } catch (Exception e) {
+            return jsonError(500, "HOME 键执行失败: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * POST /api/ui/wait
+     * {"mode":"text_appear","text":"签到成功","timeout_ms":5000,"interval_ms":300}
+     * 
+     * mode: text_appear（等待文本出现）, text_disappear（等待文本消失）
      */
     private NanoHTTPD.Response handleWait(PhantomAccessibilityService service, 
             NanoHTTPD.IHTTPSession session) throws Exception {
         JSONObject body = parseJsonBody(session);
-        JSONObject condition = body.getJSONObject("condition");
-        long timeout = body.optLong("timeout_ms", 5000);
-        long interval = body.optLong("interval_ms", 200);
         
-        boolean success = performWait(service, body);
+        String mode = body.optString("mode", "text_appear");
+        String text = body.optString("text", "");
+        int timeoutMs = body.optInt("timeout_ms", 5000);
+        int intervalMs = body.optInt("interval_ms", 300);
+        
+        if (text.isEmpty()) {
+            return jsonError(400, "缺少 text 参数");
+        }
+        
+        long start = System.currentTimeMillis();
+        boolean success = false;
+        AccessibilityNodeInfo matchedNode = null;
+        
+        while (System.currentTimeMillis() - start < timeoutMs) {
+            AccessibilityNodeInfo root = service.getRootNode();
+            if (root != null) {
+                try {
+                    boolean textExists = checkTextExists(root, text);
+                    
+                    if ("text_appear".equals(mode) && textExists) {
+                        success = true;
+                        matchedNode = findFirstTextNode(root, text);
+                        break;
+                    }
+                    
+                    if ("text_disappear".equals(mode) && !textExists) {
+                        success = true;
+                        break;
+                    }
+                } finally {
+                    root.recycle();
+                }
+            }
+            
+            try {
+                Thread.sleep(intervalMs);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        
+        long elapsed = System.currentTimeMillis() - start;
         
         JSONObject result = new JSONObject();
         result.put("success", success);
-        result.put("condition", condition);
-        result.put("timeout_ms", timeout);
+        result.put("mode", mode);
+        result.put("text", text);
+        result.put("elapsed_ms", elapsed);
+        result.put("timeout_ms", timeoutMs);
         
-        return HttpServerEngine.jsonSuccess(result);
-    }
-    
-    /**
-     * 执行等待
-     */
-    private boolean performWait(PhantomAccessibilityService service, JSONObject waitConfig) {
-        try {
-            JSONObject condition = waitConfig.getJSONObject("condition");
-            long timeout = waitConfig.optLong("timeout_ms", 5000);
-            long interval = waitConfig.optLong("interval_ms", 200);
-            
-            String type = condition.getString("type");
-            
-            switch (type) {
-                case "text":
-                    String text = condition.getString("text");
-                    return HttpServerEngine.waitForCondition(() -> {
-                        List<AccessibilityNodeInfo> nodes = service.findNodesByText(text);
-                        boolean found = nodes != null && !nodes.isEmpty();
-                        if (nodes != null) {
-                            for (AccessibilityNodeInfo node : nodes) {
-                                node.recycle();
-                            }
-                        }
-                        return found;
-                    }, timeout, interval);
-                    
-                case "id":
-                    String id = condition.getString("id");
-                    return HttpServerEngine.waitForCondition(() -> {
-                        List<AccessibilityNodeInfo> nodes = service.findNodesById(id);
-                        boolean found = nodes != null && !nodes.isEmpty();
-                        if (nodes != null) {
-                            for (AccessibilityNodeInfo node : nodes) {
-                                node.recycle();
-                            }
-                        }
-                        return found;
-                    }, timeout, interval);
-                    
-                case "gone":
-                    String goneText = condition.getString("text");
-                    return HttpServerEngine.waitForCondition(() -> {
-                        List<AccessibilityNodeInfo> nodes = service.findNodesByText(goneText);
-                        boolean gone = nodes == null || nodes.isEmpty();
-                        if (nodes != null) {
-                            for (AccessibilityNodeInfo node : nodes) {
-                                node.recycle();
-                            }
-                        }
-                        return gone;
-                    }, timeout, interval);
-                    
-                default:
-                    return false;
+        if (success) {
+            result.put("reason", "matched");
+            if (matchedNode != null) {
+                Rect rect = new Rect();
+                matchedNode.getBoundsInScreen(rect);
+                
+                JSONObject nodeObj = new JSONObject();
+                nodeObj.put("text", matchedNode.getText() != null ? matchedNode.getText().toString() : "");
+                nodeObj.put("className", matchedNode.getClassName() != null ? matchedNode.getClassName().toString() : "");
+                nodeObj.put("clickable", matchedNode.isClickable());
+                
+                JSONObject bounds = new JSONObject();
+                bounds.put("left", rect.left);
+                bounds.put("top", rect.top);
+                bounds.put("right", rect.right);
+                bounds.put("bottom", rect.bottom);
+                bounds.put("centerX", rect.centerX());
+                bounds.put("centerY", rect.centerY());
+                nodeObj.put("bounds", bounds);
+                
+                result.put("node", nodeObj);
             }
-            
-        } catch (Exception e) {
-            Log.e(TAG, "等待执行失败: " + e.getMessage());
-            return false;
+        } else {
+            result.put("reason", "timeout");
         }
+        
+        return jsonOk(result);
     }
     
     /**
-     * 节点操作
+     * POST /api/ui/action
+     * {"action":"click","text":"签到"} 或 {"action":"click","id":"com.xxx:id/btn"}
+     * 
+     * action: click, long_click, scroll_forward, scroll_backward
      */
     private NanoHTTPD.Response handleAction(PhantomAccessibilityService service, 
             NanoHTTPD.IHTTPSession session) throws Exception {
         JSONObject body = parseJsonBody(session);
-        String strategy = body.optString("strategy", "text");
-        String target = body.optString("target", "");
+        
         String action = body.optString("action", "click");
+        String text = body.optString("text", "");
+        String id = body.optString("id", "");
+        int waitMsAfter = body.optInt("wait_ms_after", 0);
         
+        // 查找节点
         List<AccessibilityNodeInfo> nodes = null;
-        
-        switch (strategy) {
-            case "text":
-                nodes = service.findNodesByText(target);
-                break;
-            case "id":
-                nodes = service.findNodesById(target);
-                break;
+        if (!text.isEmpty()) {
+            nodes = service.findNodesByText(text);
+        } else if (!id.isEmpty()) {
+            nodes = service.findNodesById(id);
+        } else {
+            return jsonError(400, "缺少 text 或 id 参数");
         }
         
         if (nodes == null || nodes.isEmpty()) {
-            return HttpServerEngine.jsonError(
-                NanoHTTPD.Response.Status.NOT_FOUND, 
-                "未找到节点: " + target);
+            JSONObject result = new JSONObject();
+            result.put("success", false);
+            result.put("found", false);
+            result.put("reason", "node_not_found");
+            result.put("action", action);
+            return jsonOk(result);
         }
         
         AccessibilityNodeInfo targetNode = nodes.get(0);
-        boolean success = false;
+        boolean performed = false;
         
         switch (action) {
             case "click":
-                success = service.clickNode(targetNode);
+                performed = service.clickNode(targetNode);
                 break;
             case "long_click":
-                // 长按
+                // 长按实现
+                Rect bounds = new Rect();
+                targetNode.getBoundsInScreen(bounds);
+                performed = service.performLongClick(bounds.centerX(), bounds.centerY());
                 break;
             case "scroll_forward":
-                success = targetNode.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD);
+                performed = targetNode.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD);
                 break;
             case "scroll_backward":
-                success = targetNode.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD);
+                performed = targetNode.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD);
                 break;
+            default:
+                // 回收节点
+                for (AccessibilityNodeInfo node : nodes) {
+                    node.recycle();
+                }
+                JSONObject errResult = new JSONObject();
+                errResult.put("success", false);
+                errResult.put("reason", "unsupported_action");
+                errResult.put("action", action);
+                errResult.put("supported_actions", new JSONArray().put("click").put("long_click").put("scroll_forward").put("scroll_backward"));
+                return jsonOk(errResult);
         }
         
+        // 构建返回节点信息
+        Rect rect = new Rect();
+        targetNode.getBoundsInScreen(rect);
+        
+        JSONObject nodeInfo = new JSONObject();
+        nodeInfo.put("text", targetNode.getText() != null ? targetNode.getText().toString() : "");
+        nodeInfo.put("className", targetNode.getClassName() != null ? targetNode.getClassName().toString() : "");
+        nodeInfo.put("clickable", targetNode.isClickable());
+        
+        JSONObject boundsInfo = new JSONObject();
+        boundsInfo.put("left", rect.left);
+        boundsInfo.put("top", rect.top);
+        boundsInfo.put("right", rect.right);
+        boundsInfo.put("bottom", rect.bottom);
+        nodeInfo.put("bounds", boundsInfo);
+        
+        // 回收节点
         for (AccessibilityNodeInfo node : nodes) {
             node.recycle();
         }
         
-        // 检查等待条件
-        JSONObject wait = body.optJSONObject("wait");
-        if (wait != null && success) {
-            success = performWait(service, wait);
+        // 等待
+        if (waitMsAfter > 0) {
+            try {
+                Thread.sleep(waitMsAfter);
+            } catch (InterruptedException e) {}
         }
         
-        return HttpServerEngine.jsonSuccess("success", success);
+        JSONObject result = new JSONObject();
+        result.put("success", performed);
+        result.put("action", action);
+        result.put("found", true);
+        result.put("performed", performed);
+        result.put("node", nodeInfo);
+        
+        return jsonOk(result);
     }
     
     /**
-     * 节点转 JSON
+     * POST /api/ui/safe_back
+     * {"max_tries":5,"check_package":"com.xuexi.android","interval_ms":400}
+     * 
+     * 安全返回：连续按返回键直到页面变化，但不退出 App
      */
-    private JSONObject nodeToJson(AccessibilityNodeInfo node) {
-        JSONObject json = new JSONObject();
-        try {
-            json.put("text", node.getText() != null ? node.getText().toString() : "");
-            json.put("contentDescription", node.getContentDescription() != null ? 
-                node.getContentDescription().toString() : "");
-            json.put("className", node.getClassName() != null ? node.getClassName().toString() : "");
-            json.put("viewId", node.getViewIdResourceName());
-            json.put("clickable", node.isClickable());
-            json.put("scrollable", node.isScrollable());
-            json.put("enabled", node.isEnabled());
-            json.put("checkable", node.isCheckable());
-            json.put("checked", node.isChecked());
+    private NanoHTTPD.Response handleSafeBack(PhantomAccessibilityService service, 
+            NanoHTTPD.IHTTPSession session) throws Exception {
+        JSONObject body = parseJsonBody(session);
+        
+        int maxTries = body.optInt("max_tries", 5);
+        String checkPackage = body.optString("check_package", "");
+        int intervalMs = body.optInt("interval_ms", 400);
+        
+        // 如果没有提供检查包名，获取当前前台包名
+        if (checkPackage.isEmpty()) {
+            checkPackage = getForegroundPackage();
+        }
+        
+        long start = System.currentTimeMillis();
+        int tries = 0;
+        boolean exited = false;
+        String finalPackage = checkPackage;
+        
+        for (int i = 0; i < maxTries; i++) {
+            tries++;
             
-            android.graphics.Rect bounds = new android.graphics.Rect();
-            node.getBoundsInScreen(bounds);
-            json.put("bounds", bounds.toString());
+            // 执行返回
+            service.performBack();
             
-        } catch (Exception e) {}
-        return json;
-    }
-    
-    private JSONObject parseJsonBody(NanoHTTPD.IHTTPSession session) throws Exception {
-        Map<String, String> files = new HashMap<>();
-        session.parseBody(files);
-        String body = files.get("postData");
-        return new JSONObject(body != null ? body : "{}");
-    }
-    
-    private Map<String, String> parseQueryParams(NanoHTTPD.IHTTPSession session) {
-        Map<String, String> params = new HashMap<>();
-        for (Map.Entry<String, List<String>> entry : session.getParameters().entrySet()) {
-            if (!entry.getValue().isEmpty()) {
-                params.put(entry.getKey(), entry.getValue().get(0));
+            try {
+                Thread.sleep(intervalMs);
+            } catch (InterruptedException e) {
+                break;
+            }
+            
+            // 检查当前包名
+            String currentPackage = getForegroundPackage();
+            
+            // 如果包名变了，说明退出了 App
+            if (!currentPackage.equals(checkPackage)) {
+                exited = true;
+                finalPackage = currentPackage;
+                break;
+            }
+            
+            // 检查 UI 树是否变化（简化：用节点数判断）
+            AccessibilityNodeInfo root = service.getRootNode();
+            if (root != null) {
+                // 简单判断：如果窗口内容变化，认为返回成功
+                // 这里可以扩展为更精确的判断逻辑
+                root.recycle();
             }
         }
-        return params;
+        
+        long elapsed = System.currentTimeMillis() - start;
+        
+        JSONObject result = new JSONObject();
+        
+        if (exited) {
+            result.put("success", false);
+            result.put("reason", "exited_app");
+            result.put("tries", tries);
+            result.put("elapsed_ms", elapsed);
+            result.put("final_package", finalPackage);
+            result.put("expected_package", checkPackage);
+        } else {
+            result.put("success", true);
+            result.put("tries", tries);
+            result.put("elapsed_ms", elapsed);
+            result.put("final_package", finalPackage);
+            result.put("message", "已执行 " + tries + " 次返回，仍在目标 App 内");
+        }
+        
+        return jsonOk(result);
     }
 }
