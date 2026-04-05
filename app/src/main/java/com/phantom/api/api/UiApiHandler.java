@@ -130,13 +130,63 @@ public class UiApiHandler implements HttpServerEngine.ApiHandler {
     // ==================== 节点工具方法 ====================
     
     /**
+     * 刷新节点信息（借鉴自 AutoJs6）
+     * 滑动后需要刷新才能获取正确的坐标
+     */
+    private void refreshNode(AccessibilityNodeInfo node) {
+        if (node == null) return;
+        try {
+            node.refresh();
+        } catch (Exception e) {
+            Log.w(TAG, "刷新节点失败: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * 刷新整个节点树
+     */
+    private void refreshNodeTree(AccessibilityNodeInfo node) {
+        if (node == null) return;
+        try {
+            node.refresh();
+        } catch (Exception e) {}
+        
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child != null) {
+                refreshNodeTree(child);
+            }
+        }
+    }
+    
+    /**
+     * 检查坐标是否有效
+     * 负坐标表示元素在屏幕外
+     */
+    private boolean isValidBounds(Rect rect, int screenWidth, int screenHeight) {
+        if (rect == null) return false;
+        // 允许部分在屏幕外，但中心点必须在屏幕内
+        int centerX = rect.centerX();
+        int centerY = rect.centerY();
+        return centerX >= 0 && centerY >= 0 && 
+               centerX <= screenWidth && centerY <= screenHeight;
+    }
+    
+    /**
      * 节点转 JSON（简化版，用于 find 返回）
+     * 修复：刷新节点、验证坐标、添加可见性检测
      */
     private JSONObject nodeToJson(AccessibilityNodeInfo node, String matchedText, int upward) {
         JSONObject json = new JSONObject();
         try {
+            // 刷新节点获取最新坐标
+            refreshNode(node);
+            
             Rect rect = new Rect();
             node.getBoundsInScreen(rect);
+            
+            // 检查可见性
+            boolean visibleToUser = node.isVisibleToUser();
             
             json.put("text", node.getText() != null ? node.getText().toString() : "");
             json.put("matchedText", matchedText);
@@ -144,7 +194,11 @@ public class UiApiHandler implements HttpServerEngine.ApiHandler {
             json.put("viewIdResourceName", node.getViewIdResourceName() != null ? node.getViewIdResourceName() : "");
             json.put("clickable", node.isClickable());
             json.put("enabled", node.isEnabled());
+            json.put("visible", visibleToUser);
             json.put("upward", upward);
+            
+            // 坐标有效性标记
+            boolean validCoords = rect.left >= 0 && rect.top >= 0;
             
             JSONObject bounds = new JSONObject();
             bounds.put("left", rect.left);
@@ -155,7 +209,16 @@ public class UiApiHandler implements HttpServerEngine.ApiHandler {
             bounds.put("centerY", rect.centerY());
             bounds.put("width", rect.width());
             bounds.put("height", rect.height());
+            bounds.put("valid", validCoords);
             json.put("bounds", bounds);
+            
+            // 添加警告信息
+            if (!validCoords) {
+                json.put("warning", "坐标可能无效（元素在屏幕外）");
+            }
+            if (!visibleToUser) {
+                json.put("warning", "元素不可见");
+            }
             
         } catch (Exception e) {
             Log.e(TAG, "节点转 JSON 失败: " + e.getMessage());
@@ -265,8 +328,9 @@ public class UiApiHandler implements HttpServerEngine.ApiHandler {
     }
     
     /**
-     * GET /api/ui/find?text=xxx&clickable=true&upward=3
+     * GET /api/ui/find?text=xxx&clickable=true&upward=3&validBounds=true
      * 查找节点，支持可点击性过滤和父节点回溯
+     * 新增 validBounds 参数过滤无效坐标（负坐标）
      */
     private NanoHTTPD.Response handleFind(PhantomAccessibilityService service, 
             NanoHTTPD.IHTTPSession session) throws Exception {
@@ -274,10 +338,18 @@ public class UiApiHandler implements HttpServerEngine.ApiHandler {
         String text = params.get("text");
         String id = params.get("id");
         boolean requireClickable = "true".equals(params.get("clickable"));
+        boolean validBoundsOnly = "true".equals(params.get("validBounds"));
         int upward = params.containsKey("upward") ? Integer.parseInt(params.get("upward")) : 3;
         
         if ((text == null || text.isEmpty()) && (id == null || id.isEmpty())) {
             return jsonError(400, "缺少 text 或 id 参数");
+        }
+        
+        // 刷新根节点获取最新状态
+        AccessibilityNodeInfo rootNode = service.getRootNode();
+        if (rootNode != null) {
+            refreshNodeTree(rootNode);
+            rootNode.recycle();
         }
         
         List<AccessibilityNodeInfo> nodes = null;
@@ -291,6 +363,20 @@ public class UiApiHandler implements HttpServerEngine.ApiHandler {
         
         if (nodes != null) {
             for (AccessibilityNodeInfo node : nodes) {
+                // 刷新节点
+                refreshNode(node);
+                
+                // 检查坐标有效性
+                Rect bounds = new Rect();
+                node.getBoundsInScreen(bounds);
+                boolean validBounds = bounds.centerX() >= 0 && bounds.centerY() >= 0;
+                
+                // 如果要求有效坐标且坐标无效，跳过
+                if (validBoundsOnly && !validBounds) {
+                    node.recycle();
+                    continue;
+                }
+                
                 AccessibilityNodeInfo resultNode = node;
                 String matchedText = node.getText() != null ? node.getText().toString() : "";
                 int upwardLevel = 0;
@@ -311,6 +397,8 @@ public class UiApiHandler implements HttpServerEngine.ApiHandler {
                         upwardLevel++;
                         
                         resultNode = clickableParent;
+                        // 刷新父节点
+                        refreshNode(resultNode);
                     }
                 }
                 

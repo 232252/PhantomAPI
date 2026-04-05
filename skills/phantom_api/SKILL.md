@@ -658,22 +658,86 @@ curl -X POST http://192.168.110.140:9999/api/advanced/batch \
 | 当前Activity | `curl IP:9999/api/sys/activity` |
 | 点击坐标 | `POST /api/ui/tap {"x":540,"y":960}` |
 | 点击文本 | `POST /api/ui/tap {"text":"确定","clickable":true}` |
-| 查找节点 | `GET /api/ui/find?text=登录&clickable=true` |
+| 查找节点 | `GET /api/ui/find?text=登录&clickable=true&validBounds=true` |
 | 等待出现 | `POST /api/ui/wait {"mode":"text_appear","text":"成功"}` |
-| 等待消失 | `POST /api/ui/wait {"mode":"text_disappear","text":"加载中"}` |
 | 返回键 | `POST /api/ui/back` |
 | 回桌面 | `GET /api/ui/home` |
 | 向上滑 | `POST /api/ui/swipe {"startX":540,"startY":1500,"endX":540,"endY":500}` |
-| 安全返回 | `POST /api/ui/safe_back {"check_package":"包名"}` |
 | **中文输入** | `POST /api/advanced/input {"text":"你好"}` |
-| **清除输入** | `POST /api/advanced/clear` |
-| **长按** | `POST /api/advanced/long_press {"x":540,"y":960,"duration":1000}` |
+| **长按** | `POST /api/advanced/long_press {"x":540,"y":960}` |
 | **双击** | `POST /api/advanced/double_tap {"x":540,"y":960}` |
 | **拖拽** | `POST /api/advanced/drag {"startX":540,"startY":1500,"endX":540,"endY":500}` |
-| **缩放** | `POST /api/advanced/pinch {"direction":"out","distance":300}` |
+| **缩放** | `POST /api/advanced/pinch {"direction":"out"}` |
 | **按键** | `POST /api/advanced/keyevent {"key":"back"}` |
-| **滚动查找** | `POST /api/advanced/scroll_to {"text":"积分","max_scrolls":10}` |
-| **批量操作** | `POST /api/advanced/batch {"actions":[...]}` |
+| **滚动查找** | `POST /api/advanced/scroll_to {"text":"积分"}` |
+| **选择器查询** | `POST /api/selector/query {"clickable":true,"validBounds":true}` |
+| **选择器点击** | `POST /api/selector/click {"textContains":"签到"}` |
+
+---
+
+## 🎯 选择器 API (v1.2新增)
+
+借鉴自 GKD 的选择器语法，支持灵活的元素匹配：
+
+### 查询元素
+
+```bash
+# 查找所有可点击且坐标有效的元素
+curl -X POST http://192.168.110.140:9999/api/selector/query \
+  -H "Content-Type: application/json" \
+  -d '{"clickable":true,"visible":true,"validBounds":true,"limit":10}'
+```
+
+### 选择器参数
+
+| 参数 | 说明 | 示例 |
+|------|------|------|
+| `text` | 文本精确匹配 | `"text":"登录"` |
+| `textContains` | 文本包含 | `"textContains":"签到"` |
+| `textStartsWith` | 文本开头 | `"textStartsWith":"学习"` |
+| `id` | ID包含匹配 | `"id":"btn_login"` |
+| `className` | 类名包含 | `"className":"Button"` |
+| `clickable` | 可点击 | `true` |
+| `scrollable` | 可滚动 | `true` |
+| `visible` | 可见性 | `true` |
+| `validBounds` | 坐标有效（非负） | `true` |
+| `depth` | 精确深度 | `5` |
+| `depthMin/Max` | 深度范围 | `2` / `10` |
+| `limit` | 返回数量限制 | `10` |
+
+### 选择器点击
+
+```bash
+# 点击包含"签到"文本的第一个元素
+curl -X POST http://192.168.110.140:9999/api/selector/click \
+  -H "Content-Type: application/json" \
+  -d '{"textContains":"签到"}'
+
+# 点击第3个匹配的元素
+curl -X POST http://192.168.110.140:9999/api/selector/click \
+  -H "Content-Type: application/json" \
+  -d '{"clickable":true,"index":2}'
+```
+
+### 存在检查
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/selector/exists \
+  -H "Content-Type: application/json" \
+  -d '{"textContains":"确定"}'
+# 返回: {"exists":true,"count":1}
+```
+
+### 坐标问题修复说明
+
+滑动后部分元素的坐标可能变成负数（元素滑出屏幕上方），使用 `validBounds:true` 可过滤掉这些无效坐标的元素。
+
+```bash
+# 只返回坐标有效的元素
+curl -X POST http://192.168.110.140:9999/api/selector/query \
+  -H "Content-Type: application/json" \
+  -d '{"clickable":true,"validBounds":true}'
+```
 
 ---
 

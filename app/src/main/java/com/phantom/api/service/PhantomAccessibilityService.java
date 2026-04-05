@@ -114,9 +114,17 @@ public class PhantomAccessibilityService extends AccessibilityService {
     
     /**
      * 将节点转换为 JSON
+     * 修复：刷新节点、验证坐标、过滤屏幕外元素
      */
     private JSONObject nodeToJson(AccessibilityNodeInfo node, int depth) throws Exception {
         JSONObject json = new JSONObject();
+        
+        // 刷新节点获取最新状态
+        try {
+            node.refresh();
+        } catch (Exception e) {
+            // 忽略刷新失败
+        }
         
         // 基本信息
         json.put("depth", depth);
@@ -139,9 +147,14 @@ public class PhantomAccessibilityService extends AccessibilityService {
         json.put("selected", node.isSelected());
         json.put("visible", node.isVisibleToUser());
         
-        // 坐标信息
+        // 坐标信息 - 使用 getBoundsInScreen 而非 getBoundsInParent
         Rect bounds = new Rect();
         node.getBoundsInScreen(bounds);
+        
+        // 坐标有效性检查
+        boolean validBounds = bounds.left >= 0 && bounds.top >= 0 && 
+                              bounds.width() > 0 && bounds.height() > 0;
+        
         JSONObject boundsJson = new JSONObject();
         boundsJson.put("left", bounds.left);
         boundsJson.put("top", bounds.top);
@@ -151,7 +164,13 @@ public class PhantomAccessibilityService extends AccessibilityService {
         boundsJson.put("centerY", bounds.centerY());
         boundsJson.put("width", bounds.width());
         boundsJson.put("height", bounds.height());
+        boundsJson.put("valid", validBounds);
         json.put("bounds", boundsJson);
+        
+        // 添加坐标警告
+        if (!validBounds) {
+            json.put("boundsWarning", "坐标可能无效，元素可能在屏幕外");
+        }
         
         // 子节点
         JSONArray children = new JSONArray();
