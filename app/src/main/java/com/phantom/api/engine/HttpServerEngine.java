@@ -9,6 +9,8 @@ import com.phantom.api.api.SysApiHandler;
 import com.phantom.api.api.UiApiHandler;
 import com.phantom.api.api.WebApiHandler;
 import com.phantom.api.api.NetApiHandler;
+import com.phantom.api.api.ChromeCdpHandler;
+import com.phantom.api.api.ScopeHelperHandler;
 
 import org.json.JSONObject;
 
@@ -57,6 +59,8 @@ public class HttpServerEngine extends NanoHTTPD {
         handlers.put("/api/ui", new UiApiHandler());
         handlers.put("/api/web", new WebApiHandler(context));
         handlers.put("/api/net", new NetApiHandler(context));
+        handlers.put("/api/cdp", new ChromeCdpHandler());
+        handlers.put("/api/scope", new ScopeHelperHandler(context));
     }
     
     @Override

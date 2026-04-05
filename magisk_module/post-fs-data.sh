@@ -11,18 +11,25 @@ log() {
 
 log "=== PhantomAPI post-fs-data ==="
 
-# 确保 priv-app 目录存在
-if [ ! -d "/system/priv-app/PhantomAPI" ]; then
-    log "创建 priv-app 目录"
-    mkdir -p "/system/priv-app/PhantomAPI"
-fi
+# 1. 创建绝对共享目录
+mkdir -p /data/local/tmp/phantom
+set_perm_recursive /data/local/tmp/phantom 0 0 0777 0777 2>/dev/null
+chmod 777 /data/local/tmp/phantom
+log "创建共享目录: /data/local/tmp/phantom"
 
-# 检查 APK 是否存在
-APK_SOURCE="$MODPATH/system/priv-app/PhantomAPI/PhantomAPI.apk"
-if [ -f "$APK_SOURCE" ]; then
-    log "APK 文件存在: $APK_SOURCE"
-else
-    log "警告: APK 文件不存在"
+# 2. 注入 SELinux 规则，允许任何 App 都能读写该目录
+# 这一步是 LSPosed 模块能与宿主 App 通信的绝对前提
+magiskpolicy --live "allow * shell_data_file file { read write open getattr create unlink rename }" 2>/dev/null
+magiskpolicy --live "allow * shell_data_file dir { read write open getattr create add_name remove_name search }" 2>/dev/null
+log "SELinux 规则已注入"
+
+# 3. 允许连接 Chrome 的抽象 Unix Socket (用于 CDP)
+magiskpolicy --live "allow untrusted_app untrusted_app unix_stream_socket connectto" 2>/dev/null
+log "Chrome Socket 规则已注入"
+
+# 4. 确保 priv-app 目录存在 (备用)
+if [ ! -d "/system/priv-app/PhantomAPI" ]; then
+    mkdir -p "/system/priv-app/PhantomAPI" 2>/dev/null
 fi
 
 # 设置权限

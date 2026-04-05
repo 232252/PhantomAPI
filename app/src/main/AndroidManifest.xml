@@ -57,6 +57,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        
+        <!-- WebView 测试 Activity -->
+        <activity
+            android:name=".WebViewTestActivity"
+            android:exported="true"
+            android:label="WebView Test">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
 
         <!-- HTTP 服务 -->
         <service

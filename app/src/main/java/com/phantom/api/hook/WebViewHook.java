@@ -1,278 +1,183 @@
 package com.phantom.api.hook;
 
-import android.app.Activity;
-import android.os.Build;
-import android.os.Process;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.Log;
 import android.webkit.JsPromptResult;
-import android.webkit.WebChromeClient;
 import android.webkit.WebView;
-import android.widget.FrameLayout;
+import android.webkit.WebViewClient;
+import android.webkit.WebChromeClient;
 
 import java.io.File;
-import java.io.FileWriter;
+import java.io.FileOutputStream;
 import java.lang.reflect.Method;
 
 import de.robv.android.xposed.XC_MethodHook;
+import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
- * WebView Hook - JS 注入 + prompt 拦截
+ * WebView Hook - 统一注入版
  * 
- * 核心架构：
- * 1. 在页面加载完成时注入极简 JS SDK
- * 2. 拦截 prompt() 获取 JS 抛出的 DOM 数据
- * 3. 通过文件系统跨进程通信
+ * 核心机制：
+ * 1. Hook onPageFinished：页面加载完成时自动注入 JS
+ * 2. JS 用 prompt() 把 DOM 数据抛回 Java
+ * 3. Hook onJsPrompt：拦截 prompt，将数据写入本地文件
+ * 
+ * 优势：
+ * - 无需 PID、无需命令轮询
+ * - 页面加载完即自动触发，实时性高
+ * - 覆盖所有使用 android.webkit.WebView 的应用
  */
 public class WebViewHook {
-    
     private static final String TAG = "PhantomHook";
-    private static final String PHANTOM_PROMPT_PREFIX = "phantom://";
-    private static final String DOM_DATA_PATH = "/data/local/tmp/phantom_dom_";
-    private static final String CMD_PATH = "/data/local/tmp/phantom_cmd_";
     
-    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
-        if (lpparam.packageName.equals("com.phantom.api")) return;
-        
-        log("注入目标: " + lpparam.packageName);
-        hookWebView(lpparam);
-        hookUcWebView(lpparam);
-        hookX5WebView(lpparam);
-        startCommandPoller(lpparam);
-    }
+    // 统一 IPC 文件路径
+    public static final String DOM_RESULT_FILE = "/data/local/tmp/phantom/dom.json";
     
-    private void hookWebView(XC_LoadPackage.LoadPackageParam lpparam) {
+    // 统一注入的 JS 脚本
+    private static final String DOM_EXTRACT_JS =
+            "try {" +
+            "  var r = [];" +
+            "  var n = document.querySelectorAll('body *');" +
+            "  for (var i = 0; i < n.length; i++) {" +
+            "    var t = n[i].innerText;" +
+            "    if (t && t.trim().length > 0 && t.trim().length < 200) {" +
+            "      var b = n[i].getBoundingClientRect();" +
+            "      if (b.width > 0 && b.height > 0) {" +
+            "        r.push({t: t.trim(), x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height), tag: n[i].tagName});" +
+            "      }" +
+            "    }" +
+            "  }" +
+            "  prompt('phantom://dom', JSON.stringify(r));" +
+            "} catch(e) { prompt('phantom://error', e.message || String(e)); }";
+    
+    // onJsPrompt 的通用回调
+    private static final XC_MethodHook jsPromptHook = new XC_MethodHook() {
+        @Override
+        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+            // args: WebView view, String url, String message, String defaultValue, JsPromptResult result
+            // args[0] = WebView view
+            // args[1] = String url
+            // args[2] = String message (prompt 的第一个参数)
+            // args[3] = String defaultValue (prompt 的第二个参数，即数据)
+            // args[4] = JsPromptResult result
+            
+            String message = (String) param.args[2];  // 修正：message 在 args[2]
+            String defaultValue = (String) param.args[3];  // 修正：defaultValue 在 args[3]
+            
+            Log.i(TAG, ">>> onJsPrompt intercepted: " + message);
+            
+            if ("phantom://dom".equals(message) && defaultValue != null) {
+                param.setResult(true); // 拦截掉，不让网页真正弹窗
+                Log.i(TAG, ">>> Received DOM via prompt, length: " + defaultValue.length());
+                writeDomToFile(defaultValue);
+            } else if ("phantom://error".equals(message)) {
+                param.setResult(true);
+                Log.e(TAG, "JS inject error: " + defaultValue);
+            }
+        }
+    };
+
+    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
+        // 1. 强制开启所有 WebView 的调试能力
         try {
-            Class<?> webViewClass = XposedHelpers.findClass("android.webkit.WebView", lpparam.classLoader);
-            
-            // Hook onPageFinished
-            XposedHelpers.findAndHookMethod(webViewClass, "onPageFinished", String.class, new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) {
-                    WebView webView = (WebView) param.thisObject;
-                    injectJsSdk(webView);
-                }
-            });
-            
-            // Hook WebChromeClient.onJsPrompt
-            Class<?> clientClass = XposedHelpers.findClass("android.webkit.WebChromeClient", lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(clientClass, "onJsPrompt",
-                WebView.class, String.class, String.class, String.class, JsPromptResult.class, 
-                new XC_MethodHook() {
+            XposedHelpers.findAndHookMethod(WebView.class, "setWebContentsDebuggingEnabled", 
+                boolean.class, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
-                    String message = (String) param.args[1];
-                    String defaultValue = (String) param.args[2];
-                    
-                    if (message != null && message.startsWith(PHANTOM_PROMPT_PREFIX)) {
-                        JsPromptResult result = (JsPromptResult) param.args[4];
-                        result.confirm(defaultValue);
-                        param.setResult(true);
-                        handlePhantomPrompt(message, defaultValue);
-                    }
+                    param.args[0] = true;
                 }
             });
-            
-            log("WebView Hook 成功");
-        } catch (Throwable t) {
-            log("WebView Hook 失败: " + t.getMessage());
-        }
-    }
-    
-    private void injectJsSdk(WebView webView) {
+        } catch (Throwable ignored) {}
+        
+        // 2. Hook WebViewClient.onJsPrompt (使用 hookAllMethods 确保覆盖所有)
         try {
-            String js = 
-                "(function(){" +
-                "  if (window.__phantom_injected) return;" +
-                "  window.__phantom_injected = true;" +
-                "  window.__phantom = {" +
-                "    getDOM: function() {" +
-                "      var data = [];" +
-                "      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT, null, false);" +
-                "      var node;" +
-                "      while (node = walker.nextNode()) {" +
-                "        var rect = node.getBoundingClientRect();" +
-                "        if (rect.width > 0 && rect.height > 0) {" +
-                "          var text = node.innerText || node.value || node.placeholder || '';" +
-                "          if (text && text.trim().length < 200) {" +
-                "            data.push({tag:node.tagName, text:text.trim().substring(0,100), x:Math.round(rect.x), y:Math.round(rect.y), w:Math.round(rect.width), h:Math.round(rect.height), id:node.id||'', cls:node.className||''});" +
-                "          }" +
-                "        }" +
-                "      }" +
-                "      return JSON.stringify(data);" +
-                "    }," +
-                "    click: function(sel) { var el = document.querySelector(sel); if (el) { el.click(); return true; } return false; }," +
-                "    clickAt: function(x, y) { var el = document.elementFromPoint(x, y); if (el) { el.click(); return true; } return false; }," +
-                "    eval: function(code) { return eval(code); }" +
-                "  };" +
-                "  setTimeout(function() { prompt('phantom://dom', window.__phantom.getDOM()); }, 500);" +
-                "})();";
-            
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-                webView.evaluateJavascript(js, null);
-            } else {
-                webView.loadUrl("javascript:" + js);
+            Method[] methods = WebViewClient.class.getDeclaredMethods();
+            for (Method m : methods) {
+                if ("onJsPrompt".equals(m.getName())) {
+                    XposedBridge.hookMethod(m, jsPromptHook);
+                    Log.i(TAG, ">>> Hooked WebViewClient.onJsPrompt");
+                }
             }
-            log("JS SDK 注入成功");
-        } catch (Throwable t) {
-            log("JS SDK 注入失败: " + t.getMessage());
+        } catch (Throwable e) {
+            Log.e(TAG, "Hook WebViewClient.onJsPrompt failed: " + e);
         }
-    }
-    
-    private void handlePhantomPrompt(String message, String data) {
+        
+        // 3. Hook WebChromeClient.onJsPrompt (使用 hookAllMethods 确保覆盖所有)
         try {
-            int pid = Process.myPid();
-            File file = new File(DOM_DATA_PATH + pid + ".json");
-            FileWriter writer = new FileWriter(file);
-            writer.write(data != null ? data : "");
-            writer.close();
-            file.setReadable(true, false);
-            file.setWritable(true, false);
-            log("DOM 已保存: " + file.getPath());
-        } catch (Throwable t) {
-            log("保存 DOM 失败: " + t.getMessage());
+            Method[] methods = WebChromeClient.class.getDeclaredMethods();
+            for (Method m : methods) {
+                if ("onJsPrompt".equals(m.getName())) {
+                    XposedBridge.hookMethod(m, jsPromptHook);
+                    Log.i(TAG, ">>> Hooked WebChromeClient.onJsPrompt");
+                }
+            }
+        } catch (Throwable e) {
+            Log.e(TAG, "Hook WebChromeClient.onJsPrompt failed: " + e);
         }
-    }
-    
-    private void startCommandPoller(final XC_LoadPackage.LoadPackageParam lpparam) {
-        new Thread(() -> {
-            while (true) {
-                try {
-                    Thread.sleep(500);
-                    File cmdFile = new File(CMD_PATH + Process.myPid() + ".json");
-                    if (cmdFile.exists()) {
-                        String cmd = readFile(cmdFile);
-                        cmdFile.delete();
-                        if (cmd != null && !cmd.isEmpty()) {
-                            executeCommand(cmd, lpparam);
+        
+        // 4. Hook onPageFinished
+        try {
+            XposedHelpers.findAndHookMethod(WebViewClient.class, "onPageFinished", 
+                    WebView.class, String.class, 
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                            final WebView webView = (WebView) param.args[0];
+                            final String url = (String) param.args[1];
+                            
+                            if (url == null || (!url.startsWith("http://") && !url.startsWith("https://"))) return;
+                            
+                            String lastUrl = (String) webView.getTag();
+                            if (url.equals(lastUrl)) return;
+                            webView.setTag(url);
+                            
+                            Log.i(TAG, ">>> Page loaded, injecting JS: " + url);
+                            
+                            new Handler(Looper.getMainLooper()).post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    try {
+                                        webView.evaluateJavascript(DOM_EXTRACT_JS, null);
+                                    } catch (Throwable e) {
+                                        Log.e(TAG, "evaluateJavascript error: " + e);
+                                    }
+                                }
+                            });
                         }
                     }
-                } catch (Exception e) {}
+            );
+            Log.i(TAG, ">>> onPageFinished hook success");
+        } catch (Throwable e) {
+            Log.e(TAG, "Hook onPageFinished failed: " + e);
+        }
+    }
+    
+    private static void writeDomToFile(final String jsonStr) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                FileOutputStream fos = null;
+                try {
+                    File dir = new File("/data/local/tmp/phantom");
+                    if (!dir.exists()) dir.mkdirs();
+                    
+                    File file = new File(DOM_RESULT_FILE);
+                    fos = new FileOutputStream(file, false);
+                    fos.write(jsonStr.getBytes("UTF-8"));
+                    fos.flush();
+                    
+                    Log.i(TAG, ">>> DOM successfully written to file (" + jsonStr.length() + " bytes)");
+                } catch (Throwable e) {
+                    Log.e(TAG, ">>> Failed to write DOM file: " + e.getMessage());
+                } finally {
+                    if (fos != null) {
+                        try { fos.close(); } catch (Exception ignored) {}
+                    }
+                }
             }
         }).start();
-    }
-    
-    private void executeCommand(String cmd, XC_LoadPackage.LoadPackageParam lpparam) {
-        try {
-            org.json.JSONObject json = new org.json.JSONObject(cmd);
-            String action = json.optString("action", "");
-            String js = "";
-            
-            switch (action) {
-                case "capture_dom":
-                    js = "prompt('phantom://dom', window.__phantom.getDOM());";
-                    break;
-                case "click":
-                    js = "window.__phantom.click('" + json.optString("selector", "") + "');";
-                    break;
-                case "clickAt":
-                    js = "window.__phantom.clickAt(" + json.optInt("x", 0) + ", " + json.optInt("y", 0) + ");";
-                    break;
-                case "eval":
-                    js = "prompt('phantom://eval', String(" + json.optString("code", "") + "));";
-                    break;
-            }
-            
-            if (!js.isEmpty()) {
-                executeJsInWebView(js, lpparam);
-            }
-        } catch (Throwable t) {
-            log("执行命令失败: " + t.getMessage());
-        }
-    }
-    
-    private void executeJsInWebView(String js, XC_LoadPackage.LoadPackageParam lpparam) {
-        try {
-            Activity activity = getCurrentActivity(lpparam);
-            if (activity != null) {
-                traverseViews(activity.getWindow().getDecorView(), (view) -> {
-                    if (view instanceof WebView) {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-                            ((WebView) view).evaluateJavascript(js, null);
-                        }
-                    }
-                });
-            }
-        } catch (Throwable t) {}
-    }
-    
-    private Activity getCurrentActivity(XC_LoadPackage.LoadPackageParam lpparam) {
-        try {
-            Object at = XposedHelpers.callStaticMethod(
-                XposedHelpers.findClass("android.app.ActivityThread", lpparam.classLoader), 
-                "currentActivityThread");
-            return (Activity) XposedHelpers.callMethod(at, "getCurrentActivity");
-        } catch (Throwable t) { return null; }
-    }
-    
-    private void traverseViews(Object view, ViewVisitor visitor) {
-        if (view instanceof android.view.View) {
-            visitor.visit((android.view.View) view);
-            if (view instanceof FrameLayout) {
-                FrameLayout layout = (FrameLayout) view;
-                for (int i = 0; i < layout.getChildCount(); i++) {
-                    traverseViews(layout.getChildAt(i), visitor);
-                }
-            }
-        }
-    }
-    
-    private interface ViewVisitor { void visit(android.view.View view); }
-    
-    private String readFile(File file) {
-        try {
-            java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader(file));
-            StringBuilder sb = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) sb.append(line);
-            reader.close();
-            return sb.toString();
-        } catch (Exception e) { return null; }
-    }
-    
-    private void hookUcWebView(XC_LoadPackage.LoadPackageParam lpparam) {
-        try {
-            Class<?> ucClass = XposedHelpers.findClass("com.uc.webview.export.WebView", lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(ucClass, "onPageFinished", String.class, new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) {
-                    injectJsSdkToUc(param.thisObject);
-                }
-            });
-            log("UC WebView Hook 成功");
-        } catch (Throwable t) {}
-    }
-    
-    private void injectJsSdkToUc(Object webView) {
-        try {
-            Method evalMethod = webView.getClass().getMethod("evaluateJavascript", String.class, android.webkit.ValueCallback.class);
-            String js = "/* Phantom JS SDK */";
-            evalMethod.invoke(webView, js, null);
-        } catch (Throwable t) {}
-    }
-    
-    private void hookX5WebView(XC_LoadPackage.LoadPackageParam lpparam) {
-        try {
-            Class<?> x5Class = XposedHelpers.findClass("com.tencent.smtt.sdk.WebView", lpparam.classLoader);
-            XposedHelpers.findAndHookMethod(x5Class, "onPageFinished", String.class, new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) {
-                    injectJsSdkToX5(param.thisObject);
-                }
-            });
-            log("X5 WebView Hook 成功");
-        } catch (Throwable t) {}
-    }
-    
-    private void injectJsSdkToX5(Object webView) {
-        try {
-            Method evalMethod = webView.getClass().getMethod("evaluateJavascript", String.class, android.webkit.ValueCallback.class);
-            String js = "/* Phantom JS SDK */";
-            evalMethod.invoke(webView, js, null);
-        } catch (Throwable t) {}
-    }
-    
-    private void log(String msg) {
-        android.util.Log.i(TAG, msg);
     }
 }

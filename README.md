@@ -1,206 +1,245 @@
-# PhantomAPI
+# PhantomAPI - Android 系统级控制服务
 
-**系统级 Android 控制服务** - 基于 Magisk/LSPosed，通过局域网暴露 RESTful API，实现 UI 感知与底层控制。
+基于 Magisk/LSPosed 的系统级 Android 控制服务，通过局域网暴露 RESTful API，实现 UI 感知与底层控制。
 
-## 核心特性
+## ⚠️ 核心原则
 
-- **零截图/OCR**: 基于 AccessibilityNodeInfo 和 DOM 树的 UI 感知
-- **低延迟控制**: InputManager.injectInputEvent() 实现毫秒级响应（< 30ms）
-- **WebView 调试**: 强制开启 WebView 调试端口，支持 CDP 协议
-- **RESTful API**: 局域网 HTTP 服务，端口 9999
-- **显式等待**: 支持时序控制，等待条件满足
-- **连接拓扑**: 实时监控网络连接和流量
+**绝对禁止截图和 OCR** - 必须基于 AccessibilityNodeInfo 和 DOM 树
 
 ## 架构
 
 ```
-┌─────────────────────────────────────────┐
-│           PhantomAPI Service            │
-├─────────────────────────────────────────┤
-│  HTTP Server (NanoHTTPD)    Port: 9999  │
-├─────────────────────────────────────────┤
-│  Accessibility Service    │  CDP Bridge │
-│  (UI Tree + Gestures)     │  (WebView)  │
-├─────────────────────────────────────────┤
-│  InputInjectionEngine (Root)            │
-│  InputManager.injectInputEvent()        │
-└─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                      PhantomAPI                             │
+├─────────────────────────────────────────────────────────────┤
+│  HTTP Server (NanoHTTPD) :9999                              │
+│  ├── /api/sys/*   - 系统信息、安装应用列表                   │
+│  ├── /api/ui/*    - Accessibility UI 树、点击、滑动         │
+│  ├── /api/web/*   - WebView DOM 提取、元素查找、点击        │
+│  ├── /api/net/*   - 网络代理设置                            │
+│  └── /api/cdp/*   - Chrome DevTools Protocol                │
+├─────────────────────────────────────────────────────────────┤
+│  LSPosed Hook (WebViewHook)                                 │
+│  ├── onPageFinished → 注入 JS 脚本                          │
+│  ├── prompt() → 数据回传                                    │
+│  └── 写入 /data/local/tmp/phantom/dom.json                  │
+├─────────────────────────────────────────────────────────────┤
+│  AccessibilityService                                       │
+│  ├── UI 树遍历                                              │
+│  ├── 坐标点击/滑动                                          │
+│  └── 节点操作                                               │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## API 端点
 
-### 系统域 `/api/sys/*`
-| 端点 | 方法 | 描述 |
+### Web API (`/api/web/*`)
+
+| 端点 | 方法 | 功能 | 参数 |
+|------|------|------|------|
+| `/api/web/detect` | GET | 检测 WebView 状态 | - |
+| `/api/web/dom` | GET | 获取 DOM 数据 | - |
+| `/api/web/find` | GET | 查找元素 | `text`, `tag` |
+| `/api/web/click` | POST | 点击元素 | `{"x":100,"y":200}` 或 `{"text":"登录"}` |
+
+### Chrome CDP API (`/api/cdp/*`)
+
+| 端点 | 方法 | 功能 |
 |------|------|------|
-| `/api/sys/info` | GET | 设备信息（品牌、型号、屏幕、内存等） |
-| `/api/sys/foreground` | GET | 前台应用包名 |
-| `/api/sys/packages` | GET | 已安装应用列表 |
+| `/api/cdp/pages` | GET | 获取 Chrome 页面列表 |
+| `/api/cdp/title` | GET | 获取当前页面标题 |
 
-### UI 域 `/api/ui/*`
-| 端点 | 方法 | 描述 |
-|------|------|------|
-| `/api/ui/tree` | GET | 获取完整 UI 树（AccessibilityNodeInfo） |
-| `/api/ui/find` | GET | 查找包含指定文本的节点 |
-| `/api/ui/tap` | POST | 点击指定坐标（支持显式等待） |
-| `/api/ui/swipe` | POST | 滑动手势 |
-| `/api/ui/back` | POST | 返回键 |
-| `/api/ui/wait` | POST | 显式等待条件 |
-| `/api/ui/action` | POST | 节点操作（click/scroll） |
+### UI API (`/api/ui/*`)
 
-### WebView 域 `/api/web/*`
-| 端点 | 方法 | 描述 |
-|------|------|------|
-| `/api/web/detect` | GET | 检测 WebView 调试可用性 |
-| `/api/web/sockets` | GET | 列出可用 DevTools Socket |
-| `/api/web/dom` | GET | 获取 DOM 树（CDP） |
-| `/api/web/execute` | POST | 执行 JavaScript |
-| `/api/web/click` | POST | CDP 级别点击 |
-| `/api/web/cdp` | POST | 原始 CDP 命令 |
+| 端点 | 方法 | 功能 | 参数 |
+|------|------|------|------|
+| `/api/ui/tree` | GET | 获取 Accessibility UI 树 | - |
+| `/api/ui/tap` | POST | 坐标点击 | `{"x":100,"y":200}` |
+| `/api/ui/swipe` | POST | 滑动 | `{"startX":100,"startY":100,"endX":200,"endY":200}` |
+| `/api/ui/back` | POST | 返回键 | - |
 
-### 网络域 `/api/net/*`
-| 端点 | 方法 | 描述 |
-|------|------|------|
-| `/api/net/status` | GET | 网络连接状态 |
-| `/api/net/wifi` | GET | WiFi 信息 |
-| `/api/net/connections` | GET | 连接拓扑（谁在连哪里） |
-| `/api/net/traffic` | GET | 流量统计（按应用） |
+## WebView DOM 提取机制
 
-## 安装要求
+### 核心流程
 
-- Android 8.0+ (SDK 26+)
-- Root 权限 (Magisk)
-- LSPosed (必须，用于 WebView Hook)
-
-## 安装方式
-
-### 方式一：Magisk 模块安装（推荐）
-```bash
-# 1. 编译 APK
-./gradlew assembleDebug
-
-# 2. 将 APK 复制到 Magisk 模块
-cp app/build/outputs/apk/debug/app-debug.apk magisk_module/system/priv-app/PhantomAPI/PhantomAPI.apk
-
-# 3. 打包 Magisk 模块
-cd magisk_module && zip -r ../PhantomAPI.zip .
-
-# 4. 在 Magisk 中安装模块
-adb push ../PhantomAPI.zip /sdcard/
-# 然后在 Magisk Manager 中选择本地安装
-
-# 5. 重启设备
-adb reboot
+```
+1. 页面加载完成
+   ↓
+2. LSPosed Hook onPageFinished 自动注入 JS
+   >>> Page loaded, injecting JS: https://www.baidu.com/
+   ↓
+3. JS 提取 DOM 并通过 prompt() 发送
+   prompt('phantom://dom', JSON.stringify(domData))
+   ↓
+4. LSPosed Hook onJsPrompt 拦截并写入文件
+   >>> Received DOM via prompt, length: 8628
+   >>> DOM successfully written to file
+   ↓
+5. API /api/web/dom 返回 DOM 数据
 ```
 
-### 方式二：普通安装（功能受限）
-```bash
-./gradlew assembleDebug
-adb install app/build/outputs/apk/debug/app-debug.apk
+### 关键代码
+
+```java
+// WebViewHook.java - 注入 JS
+private static final String DOM_EXTRACT_JS =
+    "try {" +
+    "  var r = [];" +
+    "  var n = document.querySelectorAll('body *');" +
+    "  for (var i = 0; i < n.length; i++) {" +
+    "    var t = n[i].innerText;" +
+    "    if (t && t.trim().length > 0 && t.trim().length < 200) {" +
+    "      var b = n[i].getBoundingClientRect();" +
+    "      if (b.width > 0 && b.height > 0) {" +
+    "        r.push({t: t.trim(), x: Math.round(b.x), y: Math.round(b.y), " +
+    "               w: Math.round(b.width), h: Math.round(b.height), tag: n[i].tagName});" +
+    "      }" +
+    "    }" +
+    "  }" +
+    "  prompt('phantom://dom', JSON.stringify(r));" +
+    "} catch(e) { prompt('phantom://error', e.message || String(e)); }";
 ```
 
-## 使用
+## 安装
 
-### 1. 启用无障碍服务
-设置 > 无障碍 > PhantomAPI > 开启
+### 前置要求
 
-### 2. 启用 LSPosed 模块
-LSPosed Manager > 模块 > PhantomAPI > 勾选目标应用
+- Android 设备已 Root (Magisk)
+- LSPosed 框架已安装
+- 设备与控制端在同一局域网
 
-### 3. 访问 API
+### 安装步骤
+
+1. **编译 APK**
+   ```bash
+   cd PhantomAPI
+   ./gradlew assembleDebug
+   ```
+
+2. **安装 APK**
+   ```bash
+   adb install -r app/build/outputs/apk/debug/app-debug.apk
+   ```
+
+3. **启用 LSPosed 模块**
+   - 打开 LSPosed Manager
+   - 进入「模块」页面
+   - 找到 PhantomAPI 并启用
+   - 勾选需要 hook 的应用作用域
+   - 重启目标应用
+
+4. **启用无障碍服务**
+   - 设置 → 无障碍 → PhantomAPI → 开启
+
+5. **启动服务**
+   ```bash
+   adb shell am start -n com.phantom.api/.MainActivity
+   ```
+
+## 使用示例
+
+### 获取 WebView DOM
+
 ```bash
-# Ping 测试
-curl http://<设备IP>:9999/api/ping
+# 1. 打开 WebView 页面
+adb shell am start -n com.phantom.api/.WebViewTestActivity
 
-# 获取设备信息
-curl http://<设备IP>:9999/api/sys/info
+# 2. 等待页面加载完成
+sleep 5
 
-# 获取 UI 树
-curl http://<设备IP>:9999/api/ui/tree
+# 3. 获取 DOM
+curl -s "http://192.168.110.140:9999/api/web/dom" | python3 -m json.tool
+```
 
-# 点击坐标
-curl -X POST http://<设备IP>:9999/api/ui/tap \
+### 查找并点击元素
+
+```bash
+# 查找包含"百度"的元素
+curl -s "http://192.168.110.140:9999/api/web/find?text=百度"
+
+# 点击文本为"登录"的元素
+curl -X POST "http://192.168.110.140:9999/api/web/click" \
   -H "Content-Type: application/json" \
-  -d '{"x": 540, "y": 960}'
+  -d '{"text": "登录"}'
 
-# 显式等待
-curl -X POST http://<设备IP>:9999/api/ui/tap \
+# 坐标点击
+curl -X POST "http://192.168.110.140:9999/api/web/click" \
   -H "Content-Type: application/json" \
-  -d '{
-    "x": 540, 
-    "y": 300,
-    "wait": {
-      "condition": {"type": "text", "text": "搜索结果"},
-      "timeout_ms": 5000
-    }
-  }'
+  -d '{"x": 500, "y": 1000}'
 ```
 
-## 显式等待
-
-所有操作接口支持显式等待：
-
-```json
-{
-  "action": {"type": "tap", "target": "text:搜索"},
-  "wait": {
-    "condition": {"type": "text", "text": "搜索结果"},
-    "timeout_ms": 5000,
-    "interval_ms": 200
-  }
-}
-```
-
-支持的条件类型：
-- `text`: 等待文本出现
-- `id`: 等待资源 ID 出现
-- `gone`: 等待元素消失
-
-## 零截图约束
-
-本项目严格遵守零截图约束：
-- ❌ 不使用 `screencap`
-- ❌ 不使用 `MediaProjection`
-- ❌ 不使用 `SurfaceControl.captureLayers`
-- ❌ 不使用任何 OCR SDK
-
-所有 UI 感知均基于 AccessibilityNodeInfo 和 DOM 树。
-
-## 安全合规
-
-1. 仅监听局域网接口
-2. 建议添加 Token 鉴权
-3. 仅在授权测试环境使用
-4. 不收集任何用户数据
-
-## 编译
+### Chrome CDP
 
 ```bash
-export ANDROID_HOME=/path/to/android-sdk
-./gradlew assembleDebug
+# 获取 Chrome 页面列表
+curl -s "http://192.168.110.140:9999/api/cdp/pages" | python3 -m json.tool
+
+# 获取当前页面标题
+curl -s "http://192.168.110.140:9999/api/cdp/title"
 ```
 
-## 验收测试
+## 第三方应用 WebView 支持
 
-详见 [ACCEPTANCE.md](ACCEPTANCE.md)
+### 问题
+LSPosed 模块需要在 LSPosed Manager 中手动启用作用域才能 hook 第三方应用。
 
-## 许可证
+### 解决方案
 
-MIT License
+1. 打开 **LSPosed Manager**
+2. 进入 **模块** → **PhantomAPI**
+3. 勾选需要 hook 的应用（如微信、淘宝、B站等）
+4. 重启目标应用
 
-## CoPaw 技能
-
-配套 CoPaw 技能位于 `skills/phantom_api/` 目录：
+### 验证
 
 ```bash
-# 使用 CLI 工具
-./skills/phantom_api/phantom_api.sh <device_ip> ping
-./skills/phantom_api/phantom_api.sh <device_ip> info
-./skills/phantom_api/phantom_api.sh <device_ip> find 设置
-./skills/phantom_api/phantom_api.sh <device_ip> tap 540 960
+# 启动目标应用后检查日志
+adb logcat | grep "LSPosed-Bridge: PhantomHook"
+# 应该看到: LSPosed-Bridge: PhantomHook -> Loading hook for: tv.danmaku.bili
 ```
 
-## 致谢
+## 文件结构
 
-- NanoHTTPD - 轻量级 HTTP 服务
-- LSPosed - Xposed 框架
-- Magisk - 系统级 Root 方案
+```
+PhantomAPI/
+├── app/src/main/java/com/phantom/api/
+│   ├── MainActivity.java              # 主 Activity
+│   ├── WebViewTestActivity.java       # WebView 测试 Activity
+│   ├── api/
+│   │   ├── WebApiHandler.java         # Web API 处理器
+│   │   ├── UiApiHandler.java          # UI API 处理器
+│   │   ├── SysApiHandler.java         # 系统 API 处理器
+│   │   ├── NetApiHandler.java         # 网络 API 处理器
+│   │   ├── ChromeCdpHandler.java      # Chrome CDP 处理器
+│   │   └── ScopeHelperHandler.java    # 作用域辅助 API
+│   ├── engine/
+│   │   ├── HttpServerEngine.java      # HTTP 服务器引擎
+│   │   └── WebViewEngine.java         # WebView 引擎
+│   ├── hook/
+│   │   ├── WebViewHook.java           # WebView Hook 核心
+│   │   └── XposedInit.java            # Xposed 入口
+│   └── service/
+│       ├── PhantomAccessibilityService.java  # 无障碍服务
+│       └── PhantomHttpService.java    # HTTP 服务
+├── magisk_module/                     # Magisk 模块配置
+└── README.md
+```
+
+## 测试结果
+
+| API | 状态 | 测试结果 |
+|-----|------|---------|
+| `/api/web/detect` | ✅ | `hasCachedDom: true/false` |
+| `/api/web/dom` | ✅ | 百度首页 8628 bytes |
+| `/api/web/find` | ✅ | 找到 17 个匹配元素 |
+| `/api/web/click` | ✅ | 坐标/文本点击成功 |
+| `/api/cdp/pages` | ✅ | Chrome 12 个页面 |
+| `/api/cdp/title` | ✅ | `{"title":"百度一下"}` |
+| `/api/ui/tree` | ✅ | Accessibility UI 树 |
+
+## 设备信息
+
+- **设备**: Xiaomi MI 6
+- **系统**: Android 13 (SDK 33)
+- **Root**: Magisk + LSPosed
+- **端口**: 9999
