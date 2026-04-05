@@ -649,7 +649,222 @@ curl -X POST http://192.168.110.140:9999/api/advanced/batch \
 
 ---
 
-## 📋 常用操作速查表
+---
+
+## 🎮 高级手势 API (v1.4.0新增)
+
+借鉴自 AutoJs6、MobiAgent 的高级手势控制能力。
+
+### 方向滑动
+
+```bash
+# 向上滑动
+curl -X POST http://192.168.110.140:9999/api/gesture/swipe \
+  -H "Content-Type: application/json" \
+  -d '{"direction":"up","distance":500,"duration":300}'
+
+# direction: up, down, left, right
+```
+
+### 快速滑动 (Fling)
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/gesture/fling \
+  -H "Content-Type: application/json" \
+  -d '{"direction":"up"}'
+```
+
+### 拖拽
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/gesture/drag \
+  -H "Content-Type: application/json" \
+  -d '{"startX":540,"startY":1500,"endX":540,"endY":500,"duration":500}'
+```
+
+### 双指缩放
+
+```bash
+# 放大
+curl -X POST http://192.168.110.140:9999/api/gesture/pinch \
+  -H "Content-Type: application/json" \
+  -d '{"centerX":540,"centerY":1200,"direction":"out","distance":200}'
+
+# 缩小
+curl -X POST http://192.168.110.140:9999/api/gesture/pinch \
+  -H "Content-Type: application/json" \
+  -d '{"centerX":540,"centerY":1200,"direction":"in","distance":200}'
+```
+
+### 路径手势
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/gesture/path \
+  -H "Content-Type: application/json" \
+  -d '{"points":[{"x":100,"y":1000},{"x":500,"y":500},{"x":900,"y":1000}],"duration":1000}'
+```
+
+### 贝塞尔曲线滑动
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/gesture/bezier \
+  -H "Content-Type: application/json" \
+  -d '{"startX":100,"startY":1200,"endX":900,"endY":1200,"ctrlX":500,"ctrlY":600,"duration":500}'
+```
+
+### 手势序列
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/gesture/sequence \
+  -H "Content-Type: application/json" \
+  -d '{
+    "gestures": [
+      {"type":"tap","x":540,"y":1000},
+      {"type":"wait","ms":500},
+      {"type":"swipe","startX":540,"startY":1500,"endX":540,"endY":500,"duration":300},
+      {"type":"longPress","x":540,"y":1200,"duration":1000}
+    ]
+  }'
+```
+
+**返回**:
+```json
+{"success":true,"results":[{"index":0,"type":"tap","success":true},{"index":1,"type":"wait","success":true},{"index":2,"type":"swipe","success":true},{"index":3,"type":"longPress","success":true}]}
+```
+
+### 点击
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/gesture/tap \
+  -H "Content-Type: application/json" \
+  -d '{"x":540,"y":1200}'
+```
+
+### 双击
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/gesture/double_tap \
+  -H "Content-Type: application/json" \
+  -d '{"x":540,"y":1200}'
+```
+
+### 长按
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/gesture/long_press \
+  -H "Content-Type: application/json" \
+  -d '{"x":540,"y":1200,"duration":1000}'
+```
+
+### 滚动
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/gesture/scroll \
+  -H "Content-Type: application/json" \
+  -d '{"direction":"down","distance":500}'
+```
+
+### 图案解锁
+
+```bash
+# 点位编号: 0-8 (3x3网格)
+# 0 1 2
+# 3 4 5
+# 6 7 8
+curl -X POST http://192.168.110.140:9999/api/gesture/pattern \
+  -H "Content-Type: application/json" \
+  -d '{"points":[0,4,8,5,2],"startX":100,"startY":500,"cellSize":200,"duration":1000}'
+```
+
+---
+
+## 🌐 浏览器注入 API (v1.4.0新增)
+
+借鉴自 FP-Browser 的浏览器注入能力，支持高级 DOM 操作。
+
+### 表单填充
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/browser/form/fill \
+  -H "Content-Type: application/json" \
+  -d '{"data":{"username":"user123","password":"pass456"}}'
+```
+
+### 表单提交
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/browser/form/submit \
+  -H "Content-Type: application/json" \
+  -d '{"selector":"#loginForm"}'
+```
+
+### 表单数据提取
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/browser/form/data \
+  -H "Content-Type: application/json" \
+  -d '{"selector":"form"}'
+```
+
+### 属性获取
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/browser/attr/get \
+  -H "Content-Type: application/json" \
+  -d '{"selector":"#myInput","attr":"value"}'
+```
+
+### 属性设置
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/browser/attr/set \
+  -H "Content-Type: application/json" \
+  -d '{"selector":"#myInput","attr":"value","value":"new value"}'
+```
+
+### 样式获取
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/browser/css/get \
+  -H "Content-Type: application/json" \
+  -d '{"selector":".myClass","property":"background-color"}'
+```
+
+### 样式设置
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/browser/css/set \
+  -H "Content-Type: application/json" \
+  -d '{"selector":".myClass","property":"display","value":"none"}'
+```
+
+### XPath 查询
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/browser/xpath \
+  -H "Content-Type: application/json" \
+  -d '{"xpath":"//div[@class=\"content\"]/p"}'
+```
+
+### CSS选择器批量查询
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/browser/queryAll \
+  -H "Content-Type: application/json" \
+  -d '{"selector":".item"}'
+```
+
+### 表格数据提取
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/browser/table \
+  -H "Content-Type: application/json" \
+  -d '{"selector":"table.data-table","headers":true}'
+```
+
+---
+
+## 📋 常用操作速查表 (更新)
 
 | 需求 | 命令 |
 |------|------|

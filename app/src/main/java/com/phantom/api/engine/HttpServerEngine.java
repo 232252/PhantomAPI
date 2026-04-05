@@ -17,6 +17,8 @@ import com.phantom.api.api.AppApiHandler;
 import com.phantom.api.api.WebViewApiHandler;
 import com.phantom.api.api.NotifyApiHandler;
 import com.phantom.api.api.FileApiHandler;
+import com.phantom.api.api.BrowserApiHandler;
+import com.phantom.api.api.GestureApiHandler;
 
 import org.json.JSONObject;
 
@@ -87,6 +89,12 @@ public class HttpServerEngine extends NanoHTTPD {
         
         // 文件操作 API (v1.3.0+)
         handlers.put("/api/file", new FileApiHandler(context));
+        
+        // 浏览器注入 API (v1.4.0+)
+        handlers.put("/api/browser", new BrowserApiHandler(context));
+        
+        // 高级手势 API (v1.4.0+)
+        handlers.put("/api/gesture", new GestureApiHandler(context));
     }
     
     @Override

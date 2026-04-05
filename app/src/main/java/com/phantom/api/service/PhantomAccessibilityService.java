@@ -427,4 +427,107 @@ public class PhantomAccessibilityService extends AccessibilityService {
         }
         return false;
     }
+    
+    // ===== 高级手势方法 (v1.4.0) =====
+    
+    /**
+     * 点击
+     */
+    public boolean tap(int x, int y) {
+        return performGestureClick(x, y);
+    }
+    
+    /**
+     * 长按 (自定义时长)
+     */
+    public boolean longPress(int x, int y, int durationMs) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false;
+        
+        Path path = new Path();
+        path.moveTo(x, y);
+        GestureDescription.StrokeDescription stroke = new GestureDescription.StrokeDescription(path, 0, durationMs);
+        GestureDescription gesture = new GestureDescription.Builder().addStroke(stroke).build();
+        
+        final CountDownLatch latch = new CountDownLatch(1);
+        final boolean[] result = {false};
+        dispatchGesture(gesture, new GestureResultCallback() {
+            @Override public void onCompleted(GestureDescription g) { result[0] = true; latch.countDown(); }
+            @Override public void onCancelled(GestureDescription g) { latch.countDown(); }
+        }, null);
+        
+        try { latch.await(durationMs + 1000, TimeUnit.MILLISECONDS); } catch (InterruptedException e) {}
+        return result[0];
+    }
+    
+    /**
+     * 滑动
+     */
+    public boolean swipe(int startX, int startY, int endX, int endY, int durationMs) {
+        return performSwipe(startX, startY, endX, endY, durationMs);
+    }
+    
+    /**
+     * 双指缩放
+     */
+    public boolean pinch(int centerX, int centerY, boolean zoomOut, int distance) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false;
+        
+        int d = distance / 2;
+        Path path1 = new Path();
+        Path path2 = new Path();
+        
+        if (zoomOut) {
+            // 从中心向外
+            path1.moveTo(centerX, centerY);
+            path1.lineTo(centerX - d, centerY);
+            path2.moveTo(centerX, centerY);
+            path2.lineTo(centerX + d, centerY);
+        } else {
+            // 从外向中心
+            path1.moveTo(centerX - d, centerY);
+            path1.lineTo(centerX, centerY);
+            path2.moveTo(centerX + d, centerY);
+            path2.lineTo(centerX, centerY);
+        }
+        
+        GestureDescription.StrokeDescription stroke1 = new GestureDescription.StrokeDescription(path1, 0, 500);
+        GestureDescription.StrokeDescription stroke2 = new GestureDescription.StrokeDescription(path2, 0, 500);
+        GestureDescription gesture = new GestureDescription.Builder().addStroke(stroke1).addStroke(stroke2).build();
+        
+        final CountDownLatch latch = new CountDownLatch(1);
+        final boolean[] result = {false};
+        dispatchGesture(gesture, new GestureResultCallback() {
+            @Override public void onCompleted(GestureDescription g) { result[0] = true; latch.countDown(); }
+            @Override public void onCancelled(GestureDescription g) { latch.countDown(); }
+        }, null);
+        
+        try { latch.await(2000, TimeUnit.MILLISECONDS); } catch (InterruptedException e) {}
+        return result[0];
+    }
+    
+    /**
+     * 路径手势
+     */
+    public boolean gesturePath(List<int[]> points, int durationMs) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N || points == null || points.size() < 2) return false;
+        
+        Path path = new Path();
+        path.moveTo(points.get(0)[0], points.get(0)[1]);
+        for (int i = 1; i < points.size(); i++) {
+            path.lineTo(points.get(i)[0], points.get(i)[1]);
+        }
+        
+        GestureDescription.StrokeDescription stroke = new GestureDescription.StrokeDescription(path, 0, durationMs);
+        GestureDescription gesture = new GestureDescription.Builder().addStroke(stroke).build();
+        
+        final CountDownLatch latch = new CountDownLatch(1);
+        final boolean[] result = {false};
+        dispatchGesture(gesture, new GestureResultCallback() {
+            @Override public void onCompleted(GestureDescription g) { result[0] = true; latch.countDown(); }
+            @Override public void onCancelled(GestureDescription g) { latch.countDown(); }
+        }, null);
+        
+        try { latch.await(durationMs + 1000, TimeUnit.MILLISECONDS); } catch (InterruptedException e) {}
+        return result[0];
+    }
 }
