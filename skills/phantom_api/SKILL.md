@@ -629,7 +629,69 @@ class PhantomAPI:
     
     def browser_table(self, selector, headers=True):
         """提取表格数据"""
-        return self._post("/api/browser/table", {"selector": selector, "headers": headers})
+        return self._post("/api/browser/table/extract", {"selector": selector, "headers": headers})
+    
+    def browser_text_get(self, selector):
+        """获取文本内容"""
+        return self._post("/api/browser/text/get", {"selector": selector})
+    
+    def browser_text_set(self, selector, text):
+        """设置文本内容"""
+        return self._post("/api/browser/text/set", {"selector": selector, "text": text})
+    
+    def browser_html_get(self, selector=None):
+        """获取 HTML"""
+        return self._post("/api/browser/html/get", {"selector": selector} if selector else {})
+    
+    def browser_meta(self):
+        """获取页面 Meta 信息"""
+        return self._post("/api/browser/meta", {})
+    
+    def browser_links(self):
+        """获取所有链接"""
+        return self._post("/api/browser/links", {})
+    
+    def browser_images(self):
+        """获取所有图片"""
+        return self._post("/api/browser/images", {})
+    
+    def browser_navigate(self, url):
+        """页面导航"""
+        return self._post("/api/browser/navigate", {"url": url})
+    
+    def browser_history(self):
+        """获取历史记录"""
+        return self._post("/api/browser/history", {})
+    
+    def browser_reload(self):
+        """刷新页面"""
+        return self._post("/api/browser/reload", {})
+    
+    def browser_execute(self, script):
+        """执行脚本"""
+        return self._post("/api/browser/execute", {"script": script})
+    
+    def browser_evaluate(self, script):
+        """执行脚本并返回结果"""
+        return self._post("/api/browser/evaluate", {"script": script})
+    
+    # ========== 文件操作 API (补充) ==========
+    def file_append(self, path, content):
+        """追加文件"""
+        return self._post("/api/file/append", {"path": path, "content": content})
+    
+    def file_delete(self, path):
+        """删除文件"""
+        return self._post("/api/file/delete", {"path": path})
+    
+    def file_mkdir(self, path):
+        """创建目录"""
+        return self._post("/api/file/mkdir", {"path": path})
+    
+    # ========== 应用管理 API (补充) ==========
+    def app_recent(self):
+        """最近应用列表"""
+        return self._get("/api/app/recent")
     
     # ========== 高级操作 ==========
     def tap_and_wait(self, text, wait_text, timeout=5000):
@@ -1030,10 +1092,136 @@ curl -X POST http://192.168.110.140:9999/api/browser/queryAll \
 ### 表格数据提取
 
 ```bash
-curl -X POST http://192.168.110.140:9999/api/browser/table \
+curl -X POST http://192.168.110.140:9999/api/browser/table/extract \
   -H "Content-Type: application/json" \
   -d '{"selector":"table.data-table","headers":true}'
 ```
+
+### 获取文本内容
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/browser/text/get \
+  -H "Content-Type: application/json" \
+  -d '{"selector":".content"}'
+```
+
+### 设置文本内容
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/browser/text/set \
+  -H "Content-Type: application/json" \
+  -d '{"selector":".content","text":"新内容"}'
+```
+
+### 获取 HTML
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/browser/html/get \
+  -H "Content-Type: application/json" \
+  -d '{"selector":"#container"}'
+```
+
+### 获取页面 Meta 信息
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/browser/meta
+```
+
+**返回**: title, description, keywords, viewport 等 meta 信息。
+
+### 获取所有链接
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/browser/links
+```
+
+**返回**: 页面所有链接的 URL 和文本。
+
+### 获取所有图片
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/browser/images
+```
+
+**返回**: 页面所有图片的 src、alt、width、height。
+
+### 页面导航
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/browser/navigate \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://example.com"}'
+```
+
+### 历史记录
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/browser/history
+```
+
+**返回**: 浏览历史列表。
+
+### 刷新页面
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/browser/reload
+```
+
+### 执行脚本
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/browser/execute \
+  -H "Content-Type: application/json" \
+  -d '{"script":"document.querySelector(\".btn\").click()"}'
+```
+
+### 执行脚本并返回结果
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/browser/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{"script":"document.title"}'
+```
+
+---
+
+## 📁 文件操作 API (补充)
+
+### 追加文件
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/file/append \
+  -H "Content-Type: application/json" \
+  -d '{"path":"/sdcard/log.txt","content":"新日志行\n"}'
+```
+
+### 删除文件
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/file/delete \
+  -H "Content-Type: application/json" \
+  -d '{"path":"/sdcard/temp.txt"}'
+```
+
+### 创建目录
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/file/mkdir \
+  -H "Content-Type: application/json" \
+  -d '{"path":"/sdcard/newdir"}'
+```
+
+---
+
+## 📱 应用管理 API (补充)
+
+### 最近应用列表
+
+```bash
+curl http://192.168.110.140:9999/api/app/recent
+```
+
+**返回**: 最近使用的应用列表。
 
 ---
 
@@ -1081,7 +1269,18 @@ curl -X POST http://192.168.110.140:9999/api/browser/table \
 | **浏览器-表单填充** | `POST /api/browser/form/fill {"data":{"user":"xxx","pass":"xxx"}}` |
 | **浏览器-XPath** | `POST /api/browser/xpath {"xpath":"//div[@class=\"content\"]"}` |
 | **浏览器-属性** | `POST /api/browser/attr/get {"selector":"#id","attr":"value"}` |
-| **浏览器-表格** | `POST /api/browser/table {"selector":"table","headers":true}` |
+| **浏览器-表格** | `POST /api/browser/table/extract {"selector":"table","headers":true}` |
+| **浏览器-获取文本** | `POST /api/browser/text/get {"selector":".content"}` |
+| **浏览器-获取HTML** | `POST /api/browser/html/get {"selector":"#id"}` |
+| **浏览器-获取链接** | `POST /api/browser/links` |
+| **浏览器-获取图片** | `POST /api/browser/images` |
+| **浏览器-导航** | `POST /api/browser/navigate {"url":"https://xxx"}` |
+| **浏览器-刷新** | `POST /api/browser/reload` |
+| **浏览器-执行JS** | `POST /api/browser/execute {"script":"xxx"}` |
+| **文件-追加** | `POST /api/file/append {"path":"/sdcard/log.txt","content":"xxx"}` |
+| **文件-删除** | `POST /api/file/delete {"path":"/sdcard/temp.txt"}` |
+| **文件-创建目录** | `POST /api/file/mkdir {"path":"/sdcard/newdir"}` |
+| **应用-最近列表** | `GET /api/app/recent` |
 
 ---
 
