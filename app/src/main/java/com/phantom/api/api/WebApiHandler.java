@@ -67,18 +67,20 @@ public class WebApiHandler implements HttpServerEngine.ApiHandler {
     private NanoHTTPD.Response handleDetect() {
         File domFile = new File(WebViewHook.DOM_RESULT_FILE);
         boolean hasCachedDom = false;
+        long cacheAge = -1;
         
         if (domFile.exists()) {
             try {
                 BasicFileAttributes attrs = Files.readAttributes(domFile.toPath(), BasicFileAttributes.class);
-                long fileAge = System.currentTimeMillis() - attrs.lastModifiedTime().toMillis();
-                hasCachedDom = fileAge < 30000;
+                cacheAge = System.currentTimeMillis() - attrs.lastModifiedTime().toMillis();
+                // 5秒内算新鲜缓存
+                hasCachedDom = cacheAge < 5000;
             } catch (Exception e) {}
         }
         
         String json = String.format(
-            "{\"method\":\"webview_js_inject\",\"status\":\"available\",\"hasCachedDom\":%b}",
-            hasCachedDom
+            "{\"method\":\"webview_js_inject\",\"status\":\"available\",\"hasCachedDom\":%b,\"cacheAge\":%d}",
+            hasCachedDom, cacheAge
         );
         
         return NanoHTTPD.newFixedLengthResponse(

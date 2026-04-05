@@ -38,6 +38,8 @@ public class SysApiHandler implements HttpServerEngine.ApiHandler {
             return handleDeviceInfo();
         } else if (uri.equals("/api/sys/foreground")) {
             return handleForegroundApp();
+        } else if (uri.equals("/api/sys/activity")) {
+            return handleForegroundActivity();
         } else if (uri.equals("/api/sys/packages")) {
             return handleInstalledPackages();
         } else {
@@ -125,6 +127,54 @@ public class SysApiHandler implements HttpServerEngine.ApiHandler {
             } catch (Exception e) {
                 result.put("appName", foregroundPackage);
             }
+        }
+        
+        return HttpServerEngine.jsonSuccess(result);
+    }
+    
+    /**
+     * 获取前台 Activity 信息（包含完整 Activity 名）
+     * GET /api/sys/activity
+     * 利用系统级权限，通过 ActivityManager.getRunningTasks() 获取顶层 Activity
+     */
+    @SuppressWarnings("deprecation")
+    private NanoHTTPD.Response handleForegroundActivity() throws Exception {
+        JSONObject result = new JSONObject();
+        
+        try {
+            android.app.ActivityManager am = (android.app.ActivityManager) 
+                context.getSystemService(Context.ACTIVITY_SERVICE);
+            
+            // 因为是系统 App，可以直接调用 getRunningTasks
+            List<android.app.ActivityManager.RunningTaskInfo> tasks = am.getRunningTasks(1);
+            
+            if (tasks != null && !tasks.isEmpty()) {
+                android.content.ComponentName top = tasks.get(0).topActivity;
+                
+                result.put("success", true);
+                result.put("package", top.getPackageName());
+                result.put("activity", top.getClassName());
+                
+                // 简化的 Activity 名（去掉包名前缀）
+                String shortName = top.getClassName();
+                if (shortName.startsWith(top.getPackageName())) {
+                    shortName = shortName.substring(top.getPackageName().length());
+                    if (shortName.startsWith(".")) {
+                        shortName = shortName.substring(1);
+                    }
+                }
+                result.put("activityShort", shortName);
+                
+                // 任务栈大小
+                result.put("numActivities", tasks.get(0).numActivities);
+            } else {
+                result.put("success", false);
+                result.put("error", "no_tasks");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "获取前台 Activity 失败: " + e.getMessage());
+            result.put("success", false);
+            result.put("error", e.getMessage());
         }
         
         return HttpServerEngine.jsonSuccess(result);
