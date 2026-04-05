@@ -13,6 +13,10 @@ import com.phantom.api.api.ChromeCdpHandler;
 import com.phantom.api.api.ScopeHelperHandler;
 import com.phantom.api.api.AdvancedApiHandler;
 import com.phantom.api.api.SelectorApiHandler;
+import com.phantom.api.api.AppApiHandler;
+import com.phantom.api.api.WebViewApiHandler;
+import com.phantom.api.api.NotifyApiHandler;
+import com.phantom.api.api.FileApiHandler;
 
 import org.json.JSONObject;
 
@@ -56,6 +60,7 @@ public class HttpServerEngine extends NanoHTTPD {
     }
     
     private void registerHandlers() {
+        // 基础 API
         handlers.put("/api/ping", this::handlePing);
         handlers.put("/api/sys", new SysApiHandler(context));
         handlers.put("/api/ui", new UiApiHandler());
@@ -63,8 +68,25 @@ public class HttpServerEngine extends NanoHTTPD {
         handlers.put("/api/net", new NetApiHandler(context));
         handlers.put("/api/cdp", new ChromeCdpHandler());
         handlers.put("/api/scope", new ScopeHelperHandler(context));
+        
+        // 高级 API (v1.1.0+)
         handlers.put("/api/advanced", new AdvancedApiHandler());
         handlers.put("/api/selector", new SelectorApiHandler());
+        
+        // 应用管理 API (v1.3.0+)
+        handlers.put("/api/app", new AppApiHandler(context));
+        handlers.put("/api/clipboard", new AppApiHandler(context));
+        handlers.put("/api/shell", new AppApiHandler(context));
+        handlers.put("/api/media", new AppApiHandler(context));
+        
+        // WebView 注入 API (v1.3.0+)
+        handlers.put("/api/webview", new WebViewApiHandler(context));
+        
+        // 通知监听 API (v1.3.0+)
+        handlers.put("/api/notify", new NotifyApiHandler(context));
+        
+        // 文件操作 API (v1.3.0+)
+        handlers.put("/api/file", new FileApiHandler(context));
     }
     
     @Override

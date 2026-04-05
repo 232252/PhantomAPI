@@ -672,6 +672,18 @@ curl -X POST http://192.168.110.140:9999/api/advanced/batch \
 | **滚动查找** | `POST /api/advanced/scroll_to {"text":"积分"}` |
 | **选择器查询** | `POST /api/selector/query {"clickable":true,"validBounds":true}` |
 | **选择器点击** | `POST /api/selector/click {"textContains":"签到"}` |
+| **应用列表** | `GET /api/app/list` |
+| **启动应用** | `POST /api/app/launch {"packageName":"com.xxx"}` |
+| **停止应用** | `POST /api/app/stop {"packageName":"com.xxx"}` |
+| **当前应用** | `GET /api/app/current` |
+| **Shell执行** | `POST /api/shell/exec {"command":"ls"}` |
+| **剪贴板读取** | `GET /api/clipboard/get` |
+| **剪贴板设置** | `POST /api/clipboard/set {"text":"xxx"}` |
+| **音量控制** | `GET /api/media/volume` |
+| **亮度控制** | `GET /api/media/brightness` |
+| **通知列表** | `GET /api/notify/list` |
+| **文件列表** | `POST /api/file/list {"path":"/sdcard"}` |
+| **WebView注入** | `POST /api/webview/eval {"script":"document.title"}` |
 
 ---
 
@@ -737,6 +749,280 @@ curl -X POST http://192.168.110.140:9999/api/selector/exists \
 curl -X POST http://192.168.110.140:9999/api/selector/query \
   -H "Content-Type: application/json" \
   -d '{"clickable":true,"validBounds":true}'
+```
+
+---
+
+## 🚀 应用管理 API (v1.3.0新增)
+
+借鉴自 MobiAgent、Hamibot 的应用管理能力。
+
+### 应用列表
+
+```bash
+curl http://192.168.110.140:9999/api/app/list
+```
+
+**返回**: 所有已安装的应用列表，包含包名和应用名。
+
+---
+
+### 启动应用
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/app/launch \
+  -H "Content-Type: application/json" \
+  -d '{"packageName":"com.android.chrome"}'
+```
+
+---
+
+### 停止应用
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/app/stop \
+  -H "Content-Type: application/json" \
+  -d '{"packageName":"com.android.chrome"}'
+```
+
+---
+
+### 清除应用数据
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/app/clear \
+  -H "Content-Type: application/json" \
+  -d '{"packageName":"com.example.app"}'
+```
+
+---
+
+### 获取当前前台应用
+
+```bash
+curl http://192.168.110.140:9999/api/app/current
+```
+
+---
+
+### 应用信息
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/app/info \
+  -H "Content-Type: application/json" \
+  -d '{"packageName":"com.android.chrome"}'
+```
+
+---
+
+## 💻 Shell 执行 API (v1.3.0新增)
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/shell/exec \
+  -H "Content-Type: application/json" \
+  -d '{"command":"pm list packages"}'
+```
+
+---
+
+## 📋 剪贴板 API (v1.3.0新增)
+
+### 读取剪贴板
+
+```bash
+curl http://192.168.110.140:9999/api/clipboard/get
+```
+
+### 设置剪贴板
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/clipboard/set \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Hello PhantomAPI!"}'
+```
+
+---
+
+## 🔊 媒体控制 API (v1.3.0新增)
+
+### 音量控制
+
+```bash
+# 获取当前音量
+curl http://192.168.110.140:9999/api/media/volume
+
+# 设置音量
+curl -X POST http://192.168.110.140:9999/api/media/volume \
+  -H "Content-Type: application/json" \
+  -d '{"volume":10,"stream":"music"}'
+
+# stream 可选值: music, ring, alarm, notification
+```
+
+### 亮度控制
+
+```bash
+# 获取当前亮度
+curl http://192.168.110.140:9999/api/media/brightness
+
+# 设置亮度 (0-255)
+curl -X POST http://192.168.110.140:9999/api/media/brightness \
+  -H "Content-Type: application/json" \
+  -d '{"brightness":128}'
+```
+
+---
+
+## 🔔 通知监听 API (v1.3.0新增)
+
+借鉴自 GKD 的通知处理机制。
+
+### 获取通知列表
+
+```bash
+curl http://192.168.110.140:9999/api/notify/list
+```
+
+**注意**: 需要先在系统设置中授权 PhantomAPI 访问通知。
+
+### 等待特定通知
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/notify/wait \
+  -H "Content-Type: application/json" \
+  -d '{"packageName":"com.example.app","titleContains":"验证码","timeout":30000}'
+```
+
+---
+
+## 📁 文件操作 API (v1.3.0新增)
+
+### 检查文件存在
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/file/exists \
+  -H "Content-Type: application/json" \
+  -d '{"path":"/sdcard"}'
+```
+
+### 列出目录
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/file/list \
+  -H "Content-Type: application/json" \
+  -d '{"path":"/sdcard"}'
+```
+
+### 读取文件
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/file/read \
+  -H "Content-Type: application/json" \
+  -d '{"path":"/sdcard/test.txt"}'
+```
+
+### 写入文件
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/file/write \
+  -H "Content-Type: application/json" \
+  -d '{"path":"/sdcard/test.txt","content":"Hello"}'
+```
+
+### 下载文件
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/file/download \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://example.com/file.zip","path":"/sdcard/download/file.zip"}'
+```
+
+---
+
+## 🌐 WebView 注入 API (v1.3.0新增)
+
+借鉴自 AutoJs6 的 InjectableWebClient，支持在 WebView 中执行 JavaScript。
+
+### 注入脚本
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/webview/inject \
+  -H "Content-Type: application/json" \
+  -d '{"script":"alert(\"Hello\")"}'
+```
+
+### 执行并返回结果
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/webview/eval \
+  -H "Content-Type: application/json" \
+  -d '{"script":"document.title"}'
+```
+
+### WebView 点击
+
+```bash
+# 通过选择器点击
+curl -X POST http://192.168.110.140:9999/api/webview/click \
+  -H "Content-Type: application/json" \
+  -d '{"selector":".btn-login"}'
+
+# 通过坐标点击
+curl -X POST http://192.168.110.140:9999/api/webview/click \
+  -H "Content-Type: application/json" \
+  -d '{"x":540,"y":960}'
+```
+
+### WebView 输入
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/webview/input \
+  -H "Content-Type: application/json" \
+  -d '{"selector":"#username","text":"user123"}'
+```
+
+### WebView 滚动
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/webview/scroll \
+  -H "Content-Type: application/json" \
+  -d '{"direction":"down","distance":300}'
+```
+
+### 等待元素出现
+
+```bash
+curl -X POST http://192.168.110.140:9999/api/webview/wait \
+  -H "Content-Type: application/json" \
+  -d '{"selector":".loading","timeout":10000}'
+```
+
+### Cookie 操作
+
+```bash
+# 获取 Cookie
+curl -X POST http://192.168.110.140:9999/api/webview/cookies \
+  -H "Content-Type: application/json" \
+  -d '{"action":"get"}'
+
+# 清除 Cookie
+curl -X POST http://192.168.110.140:9999/api/webview/cookies \
+  -H "Content-Type: application/json" \
+  -d '{"action":"clear"}'
+```
+
+### Storage 操作
+
+```bash
+# 获取 LocalStorage
+curl -X POST http://192.168.110.140:9999/api/webview/storage \
+  -H "Content-Type: application/json" \
+  -d '{"type":"local","action":"get"}'
+
+# 获取 SessionStorage
+curl -X POST http://192.168.110.140:9999/api/webview/storage \
+  -H "Content-Type: application/json" \
+  -d '{"type":"session","action":"get"}'
 ```
 
 ---
