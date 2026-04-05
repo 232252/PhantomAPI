@@ -66,10 +66,18 @@ class PhantomAPI:
         self.session.mount("http://", adapter)
     
     def _get(self, endpoint: str) -> Dict:
-        return self.session.get(f"{self.base_url}{endpoint}", timeout=self.timeout).json()
+        resp = self.session.get(f"{self.base_url}{endpoint}", timeout=self.timeout)
+        try:
+            return resp.json()
+        except:
+            return {"success": False, "error": "Empty response", "status_code": resp.status_code}
     
     def _post(self, endpoint: str, data: Dict) -> Dict:
-        return self.session.post(f"{self.base_url}{endpoint}", json=data, timeout=self.timeout).json()
+        resp = self.session.post(f"{self.base_url}{endpoint}", json=data, timeout=self.timeout)
+        try:
+            return resp.json()
+        except:
+            return {"success": False, "error": "Empty response", "status_code": resp.status_code}
     
     # ===== 基础 =====
     def ping(self) -> Dict: return self._get("/api/ping")
