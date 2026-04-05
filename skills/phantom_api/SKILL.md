@@ -4,6 +4,61 @@
 
 ---
 
+## ⚡ v1.5.0 并发控制
+
+PhantomAPI 支持**智能并发控制**，自动区分只读操作和写操作：
+
+### 只读操作（并发执行）
+以下操作可以同时并发请求，互不阻塞：
+- `/api/ping` - 测试连接
+- `/api/sys/*` - 系统信息
+- `/api/ui/tree` - UI 树
+- `/api/ui/find` - 查找节点
+- `/api/app/list` - 应用列表
+- `/api/app/current` - 当前应用
+- `/api/app/info` - 应用信息
+- `/api/clipboard/get` - 读取剪贴板
+- `/api/file/list` - 文件列表
+- `/api/file/exists` - 文件存在检查
+- `/api/file/read` - 读取文件
+- `/api/notify/list` - 通知列表
+- `/api/selector/query` - 选择器查询
+- `/api/browser/*` - 浏览器查询
+- `/api/webview/dom` - WebView DOM
+
+### 写操作（串行执行）
+以下操作会按顺序执行，保证操作安全：
+- `/api/ui/tap` - 点击
+- `/api/ui/swipe` - 滑动
+- `/api/gesture/*` - 所有手势操作
+- `/api/app/launch` - 启动应用
+- `/api/app/stop` - 停止应用
+- `/api/clipboard/set` - 设置剪贴板
+- `/api/file/write` - 写入文件
+- `/api/file/delete` - 删除文件
+- `/api/shell/exec` - Shell 执行
+
+### 并发示例
+```python
+import requests
+import concurrent.futures
+
+BASE = "http://192.168.110.140:9999"
+
+# 并发获取多个信息（只读操作）
+with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    results = executor.map(lambda url: requests.get(f"{BASE}{url}").json(), [
+        "/api/ping",
+        "/api/sys/info", 
+        "/api/app/list",
+        "/api/ui/tree"
+    ])
+    for r in results:
+        print(r)
+```
+
+---
+
 ## 🚀 快速入门（3分钟上手）
 
 ### 第一步：确认服务运行

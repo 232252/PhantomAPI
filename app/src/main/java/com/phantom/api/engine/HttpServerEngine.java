@@ -22,38 +22,99 @@ import com.phantom.api.api.GestureApiHandler;
 
 import org.json.JSONObject;
 
-import java.io.IOException;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import fi.iki.elonen.NanoHTTPD;
 
 /**
- * HTTP 服务器引擎
+ * HTTP 服务器引擎 v1.5.0
  * 
  * 特性：
- * 1. 异步处理请求，不阻塞 NanoHTTPD 线程
- * 2. 显式等待支持
- * 3. 请求节流/防抖
+ * 1. 只读操作并发执行（查询、获取信息等）
+ * 2. 写操作串行执行（点击、滑动、启动应用等）
+ * 3. 自动区分操作类型
  */
 public class HttpServerEngine extends NanoHTTPD {
     private static final String TAG = "HttpServerEngine";
     
     private final Context context;
     private final Map<String, ApiHandler> handlers = new HashMap<>();
-    private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final ExecutorService readExecutor = Executors.newCachedThreadPool();
+    private final ExecutorService writeExecutor = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    
-    // 节流控制
-    private final Map<String, AtomicLong> lastRequestTime = new HashMap<>();
-    private static final long THROTTLE_MS = 100; // 100ms 节流
     
     // 启动时间
     private static final long startTime = System.currentTimeMillis();
+    
+    // 只读操作集合（可以并发执行）
+    private static final Set<String> READ_ONLY_PREFIXES = new HashSet<String>() {{
+        add("/api/ping");
+        add("/api/sys/");
+        add("/api/ui/tree");
+        add("/api/ui/find");
+        add("/api/web/detect");
+        add("/api/web/dom");
+        add("/api/web/find");
+        add("/api/net/");
+        add("/api/app/list");
+        add("/api/app/current");
+        add("/api/app/info");
+        add("/api/app/recent");
+        add("/api/clipboard/get");
+        add("/api/file/list");
+        add("/api/file/exists");
+        add("/api/file/read");
+        add("/api/notify/list");
+        add("/api/selector/query");
+        add("/api/selector/exists");
+        add("/api/browser/");
+        add("/api/webview/dom");
+        add("/api/cdp/pages");
+    }};
+    
+    // 写操作关键字（需要串行执行）
+    private static final Set<String> WRITE_KEYWORDS = new HashSet<String>() {{
+        add("/tap");
+        add("/swipe");
+        add("/click");
+        add("/input");
+        add("/back");
+        add("/home");
+        add("/action");
+        add("/launch");
+        add("/stop");
+        add("/clear");
+        add("/write");
+        add("/append");
+        add("/delete");
+        add("/mkdir");
+        add("/copy");
+        add("/move");
+        add("/download");
+        add("/inject");
+        add("/exec");
+        add("/set");
+        add("/pinch");
+        add("/fling");
+        add("/drag");
+        add("/path");
+        add("/bezier");
+        add("/sequence");
+        add("/scroll");
+        add("/pattern");
+        add("/gesture/");
+        add("/advanced/");
+        add("/media/");
+    }};
     
     public HttpServerEngine(Context context, int port) {
         super(port);
@@ -109,35 +170,86 @@ public class HttpServerEngine extends NanoHTTPD {
             return newCorsResponse(Response.Status.OK, "");
         }
         
-        // 节流检查（对高频操作）
-        if (uri.contains("/tap") || uri.contains("/swipe")) {
-            String key = uri + "_" + getClientIp(session);
-            AtomicLong lastTime = lastRequestTime.computeIfAbsent(key, k -> new AtomicLong(0));
-            long now = System.currentTimeMillis();
-            long elapsed = now - lastTime.get();
-            
-            if (elapsed < THROTTLE_MS) {
-                Log.w(TAG, "请求节流: " + uri);
-                return jsonError(Response.Status.TOO_MANY_REQUESTS, "请求过于频繁，请稍后重试");
-            }
-            lastTime.set(now);
-        }
-        
         try {
             String path = uri.split("\\?")[0];
             
+            // 查找处理器
+            ApiHandler handler = null;
             for (Map.Entry<String, ApiHandler> entry : handlers.entrySet()) {
                 if (path.startsWith(entry.getKey())) {
-                    // 异步处理
-                    return entry.getValue().handle(session);
+                    handler = entry.getValue();
+                    break;
                 }
             }
             
-            return jsonError(Response.Status.NOT_FOUND, "Not found: " + uri);
+            if (handler == null) {
+                return jsonError(Response.Status.NOT_FOUND, "Not found: " + uri);
+            }
+            
+            final ApiHandler finalHandler = handler;
+            
+            // 判断是否为只读操作
+            if (isReadOnlyOperation(path)) {
+                // 只读操作：直接执行（并发）
+                Log.d(TAG, "并发执行（只读）: " + path);
+                return finalHandler.handle(session);
+            } else {
+                // 写操作：串行执行
+                Log.d(TAG, "串行执行（写操作）: " + path);
+                return executeSequential(finalHandler, session);
+            }
             
         } catch (Exception e) {
             Log.e(TAG, "处理请求失败", e);
             return jsonError(Response.Status.INTERNAL_ERROR, "Error: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * 判断是否为只读操作
+     */
+    private boolean isReadOnlyOperation(String path) {
+        // 检查是否匹配只读前缀
+        for (String prefix : READ_ONLY_PREFIXES) {
+            if (path.startsWith(prefix) || path.equals(prefix)) {
+                // 但要排除写操作关键字
+                for (String keyword : WRITE_KEYWORDS) {
+                    if (path.contains(keyword)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+        
+        // 检查是否包含写操作关键字
+        for (String keyword : WRITE_KEYWORDS) {
+            if (path.contains(keyword)) {
+                return false;
+            }
+        }
+        
+        // 默认认为是只读（安全起见）
+        return true;
+    }
+    
+    /**
+     * 串行执行写操作
+     */
+    private Response executeSequential(ApiHandler handler, IHTTPSession session) {
+        try {
+            // 使用单线程执行器保证顺序
+            return writeExecutor.submit(() -> {
+                try {
+                    return handler.handle(session);
+                } catch (Exception e) {
+                    Log.e(TAG, "串行执行失败", e);
+                    return jsonError(Response.Status.INTERNAL_ERROR, "Error: " + e.getMessage());
+                }
+            }).get(30, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            Log.e(TAG, "提交任务失败", e);
+            return jsonError(Response.Status.INTERNAL_ERROR, "Timeout or error: " + e.getMessage());
         }
     }
     
@@ -178,60 +290,41 @@ public class HttpServerEngine extends NanoHTTPD {
     }
     
     public static Response jsonSuccess(String key, Object value) throws Exception {
-        JSONObject result = new JSONObject();
-        result.put("success", true);
-        result.put(key, value);
-        return jsonSuccess(result);
+        return jsonSuccess(new JSONObject().put(key, value));
     }
     
-    public static Response jsonError(Response.Status status, String message) {
-        JSONObject error = new JSONObject();
+    public static Response jsonError(Response.IStatus status, String message) {
         try {
+            JSONObject error = new JSONObject();
             error.put("success", false);
             error.put("error", message);
-        } catch (Exception e) {}
-        Response response = newFixedLengthResponse(status, "application/json", error.toString());
+            error.put("code", status.getRequestStatus());
+            Response response = newFixedLengthResponse(status, "application/json", error.toString());
+            addCorsHeaders(response);
+            return response;
+        } catch (Exception e) {
+            return newFixedLengthResponse(status, "application/json", "{\"error\":\"" + message + "\"}");
+        }
+    }
+    
+    private Response newCorsResponse(Response.IStatus status, String body) {
+        Response response = newFixedLengthResponse(status, "application/json", body);
         addCorsHeaders(response);
         return response;
     }
     
     private static void addCorsHeaders(Response response) {
         response.addHeader("Access-Control-Allow-Origin", "*");
-        response.addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        response.addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        response.addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        response.addHeader("Access-Control-Allow-Headers", "Content-Type");
     }
     
-    private Response newCorsResponse(Response.Status status, String content) {
-        Response response = newFixedLengthResponse(status, "application/json", content);
-        addCorsHeaders(response);
-        return response;
-    }
-    
-    /**
-     * 等待条件满足
-     */
-    public static boolean waitForCondition(ConditionChecker checker, long timeoutMs, long intervalMs) {
-        long startTime = System.currentTimeMillis();
-        
-        while (System.currentTimeMillis() - startTime < timeoutMs) {
-            try {
-                if (checker.check()) {
-                    return true;
-                }
-                Thread.sleep(intervalMs);
-            } catch (Exception e) {
-                return false;
-            }
-        }
-        
-        return false;
-    }
-    
-    /**
-     * 条件检查器接口
-     */
-    public interface ConditionChecker {
-        boolean check() throws Exception;
+    @Override
+    public void stop() {
+        super.stop();
+        readExecutor.shutdownNow();
+        writeExecutor.shutdownNow();
+        Log.i(TAG, "HTTP 服务器已停止");
     }
     
     /**
@@ -239,16 +332,5 @@ public class HttpServerEngine extends NanoHTTPD {
      */
     public interface ApiHandler {
         Response handle(IHTTPSession session) throws Exception;
-    }
-    
-    public void startServer() throws IOException {
-        start(SOCKET_READ_TIMEOUT, false);
-        Log.i(TAG, "HTTP 服务已启动，端口: " + getListeningPort());
-    }
-    
-    public void stopServer() {
-        stop();
-        executor.shutdown();
-        Log.i(TAG, "HTTP 服务已停止");
     }
 }
